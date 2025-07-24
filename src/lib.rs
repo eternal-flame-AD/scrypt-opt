@@ -4,15 +4,25 @@
     no_std
 )]
 #![cfg_attr(feature = "portable-simd", feature(portable_simd))]
+#![cfg_attr(target_arch = "x86_64", feature(stdarch_x86_avx512))]
 #![allow(
     stable_features,
-    reason = "Still on beta, 1 month to go until really stable"
+    reason = "Not actually stable, silence warnings on beta 1.89, scheduled for actual stable release on Aug.7"
 )]
-#![cfg_attr(target_arch = "x86_64", feature(stdarch_x86_avx512))]
 #![warn(missing_docs)]
 
 #[cfg(feature = "alloc")]
 extern crate alloc;
+
+#[rustfmt::skip]
+macro_rules! repeat4 {
+    ($i:ident, $c:block) => {
+        { let $i = 0; $c; }
+        { let $i = 1; $c; }
+        { let $i = 2; $c; }
+        { let $i = 3; $c; }
+    };
+}
 
 #[rustfmt::skip]
 macro_rules! repeat8 {
@@ -35,7 +45,7 @@ pub use sha2;
 pub use generic_array;
 
 /// Algorithmic Self-Test (CAST)
-pub mod cast;
+pub mod self_test;
 
 /// Memory utilities
 pub mod memory;
@@ -109,7 +119,7 @@ mod sealing {
     pub trait Sealed {}
 }
 
-/// A trait for valie cost factors
+/// A trait for valid cost factors
 pub trait ValidCostFactor: Unsigned + NonZero + sealing::Sealed {
     /// The output type
     type Output: ArrayLength + PowerOfTwo + NonZero + IsLess<U4294967296, Output = B1>;
@@ -209,6 +219,13 @@ impl<R: ArrayLength + NonZero> BufferSet<memory::MaybeHugeSlice<Align64<Block<R>
     }
 }
 
+#[inline(always)]
+/// Convert a number of blocks to a Cost Factor (log2(N))
+const fn length_to_cf(l: usize) -> u8 {
+    let v = (l.saturating_sub(2)) as u32;
+    ((32 - v.leading_zeros()) as u8).saturating_sub(1)
+}
+
 impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength + NonZero>
     BufferSet<Q, R>
 {
@@ -288,21 +305,11 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
     }
 
     #[inline(always)]
-    /// Get the Cost Factor (log2(N)) for the buffer set
+    /// Get the effective Cost Factor (log2(N)) for the buffer set
     pub fn cf(&self) -> u8 {
         let l = self.v.as_ref().len();
 
-        // these should be checked by the constructor
-        debug_assert!(l >= 4, "number of blocks must be at least 4");
-        debug_assert!(
-            l - 2 <= MAX_N as usize,
-            "number of blocks must be at most MAX_N + 2"
-        );
-
-        // subtract the place for two temporary buffers
-        let v = (l - 2).min(MAX_N as usize) as u32;
-        // plus one and next power of two for the next power of two
-        (32 - v.leading_zeros()) as u8 - 1
+        length_to_cf(l)
     }
 
     #[inline(always)]
@@ -339,11 +346,11 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
 
     /// Start an interleaved pipeline.
     fn pipeline_start_ex<S: Salsa20<Lanes = U1>>(&mut self) {
-        let n = self.n();
         let v = self.v.as_mut();
+        let n = 1 << length_to_cf(v.len());
+        // at least n+1 long, this is already enforced by length_to_cf so we can disable it for release builds
+        debug_assert!(v.len() > n, "pipeline_start_ex: v.len() < n");
         for i in 0..n {
-            debug_assert!(v.len() > (i + 1), "pipeline_start_ex: v.len() < i + 1");
-
             let [src, dst] = unsafe { v.get_disjoint_unchecked_mut([i, i + 1]) };
             scrypt_block_mix::<R, S, _, _>(&*src, dst);
         }
@@ -357,8 +364,9 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
 
     /// Drain an interleaved pipeline.
     fn pipeline_drain_ex<S: Salsa20<Lanes = U1>>(&mut self) {
-        let n = self.n();
         let v = self.v.as_mut();
+        let n = 1 << length_to_cf(v.len());
+        // at least n+2 long, this is already enforced by length_to_cf so we can disable it for release builds
         debug_assert!(v.len() >= n + 2, "pipeline_end_ex: v.len() < n + 2");
         for _ in (0..n).step_by(2) {
             let idx = unsafe { v.get_unchecked(n)[Mul32::<R>::USIZE - 16] as usize };
@@ -367,6 +375,7 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
 
             let j = idx & (n - 1);
 
+            // SAFETY: the largest j value is n-1, so the largest index of the 3 is n+1, which is in bounds after the >=n+2 check
             let [in0, in1, out] = unsafe { v.get_disjoint_unchecked_mut([n, j, n + 1]) };
             scrypt_block_mix::<R, S, _, _>((&*in0, &*in1), out);
             let idx2 = unsafe { v.get_unchecked(n + 1)[Mul32::<R>::USIZE - 16] as usize };
@@ -375,6 +384,7 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
 
             let j2 = idx2 & (n - 1);
 
+            // SAFETY: the largest j2 value is n-1, so the largest index of the 3 is n+1, which is in bounds after the >=n+2 check
             let [b, v, t] = unsafe { v.get_disjoint_unchecked_mut([n, j2, n + 1]) };
             scrypt_block_mix::<R, S, _, _>((&*v, &*t), b);
         }
@@ -387,16 +397,31 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
     }
 
     fn scrypt_ro_mix_interleaved_ex<S: Salsa20<Lanes = U2>>(&mut self, other: &mut Self) {
-        let n = self.n();
         let self_v = self.v.as_mut();
         let other_v = other.v.as_mut();
+        let self_cf = length_to_cf(self_v.len());
+        let other_cf = length_to_cf(other_v.len());
+        assert_eq!(
+            self_cf, other_cf,
+            "scrypt_ro_mix_interleaved_ex: self_cf != other_cf, are you passing two buffers of the same size?"
+        );
+        let n = 1 << self_cf;
+
+        // at least n+2 long, this is already enforced by n() so we can disable it for release builds
+        debug_assert!(
+            other_v.len() >= n + 2,
+            "scrypt_ro_mix_interleaved_ex: other_v.len() < n + 2"
+        );
+        // at least n+2 long, this is already enforced by n() so we can disable it for release builds
         debug_assert!(
             other_v.len() >= n + 2,
             "scrypt_ro_mix_interleaved_ex: other_v.len() < n + 2"
         );
 
         for i in (0..n).step_by(2) {
-            let [src, dst, dst2] = unsafe { other_v.get_disjoint_unchecked_mut([i, i + 1, i + 2]) };
+            // SAFETY: the largest i value is n-1, so the largest index is n+1, which is in bounds after the >=n+2 check
+            let [src, middle, dst] =
+                unsafe { other_v.get_disjoint_unchecked_mut([i, i + 1, i + 2]) };
 
             {
                 // Self: Compute T <- BlockMix(B ^ V[j])
@@ -409,7 +434,7 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
 
                 let [in0, in1, out] = unsafe { self_v.get_disjoint_unchecked_mut([j, n, n + 1]) };
 
-                scrypt_block_mix_mb2::<R, S, _, _, _, _>(&*src, &mut *dst, (&*in0, &*in1), out);
+                scrypt_block_mix_mb2::<R, S, _, _, _, _>(&*src, &mut *middle, (&*in0, &*in1), out);
             }
 
             {
@@ -423,7 +448,12 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
                 let [self_b, self_v, self_t] =
                     unsafe { self_v.get_disjoint_unchecked_mut([n, j2, n + 1]) };
 
-                scrypt_block_mix_mb2::<R, S, _, _, _, _>(&*dst, dst2, (&*self_v, &*self_t), self_b);
+                scrypt_block_mix_mb2::<R, S, _, _, _, _>(
+                    &*middle,
+                    &mut *dst,
+                    (&*self_v, &*self_t),
+                    self_b,
+                );
             }
         }
     }
@@ -494,15 +524,14 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
         &mut self,
     ) {
         assert!(R::USIZE <= 8, "scrypt_ro_mix_ex_zmm: R > 8");
-
-        let n = self.n();
         let v = self.v.as_mut();
+        let n = 1 << length_to_cf(v.len());
+        // at least n+1 long, this is checked by length_to_cf
+        debug_assert!(v.len() > n, "scrypt_ro_mix_ex_zmm: v.len() <= n");
 
         let mut input_b = InRegisterAdapter::<R>::new();
         let mut input_t = InRegisterAdapter::<R>::new();
         for i in 0..(n - 1) {
-            debug_assert!(v.len() > (i + 1), "scrypt_ro_mix_ex_zmm: v.len() <= i + 1");
-
             let [src, dst] = unsafe { v.get_disjoint_unchecked_mut([i, i + 1]) };
             scrypt_block_mix::<R, S, _, _>(&*src, dst);
         }
@@ -540,10 +569,27 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
         other: &mut Self,
     ) {
         assert!(R::USIZE <= 8, "scrypt_ro_mix_interleaved_ex_zmm: R > 8");
-
-        let n = self.n();
         let self_v = self.v.as_mut();
         let other_v = other.v.as_mut();
+
+        let self_cf = length_to_cf(self_v.len());
+        let other_cf = length_to_cf(other_v.len());
+        assert_eq!(
+            self_cf, other_cf,
+            "scrypt_ro_mix_interleaved_ex_zmm: self_cf != other_cf, are you passing two buffers of the same size?"
+        );
+        let n = 1 << self_cf;
+
+        // at least n+2 long, this is already enforced by n() so we can disable it for release builds
+        debug_assert!(
+            other_v.len() >= n + 2,
+            "scrypt_ro_mix_interleaved_ex_zmm: other.v.len() < n + 2"
+        );
+        // at least n+2 long, this is already enforced by n() so we can disable it for release builds
+        debug_assert!(
+            self_v.len() >= n + 2,
+            "scrypt_ro_mix_interleaved_ex_zmm: self.v.len() < n + 2"
+        );
 
         let mut idx = self_v[n][Mul32::<R>::USIZE - 16] as usize;
         idx = idx & (n - 1);
@@ -551,16 +597,14 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
         let mut input_t = InRegisterAdapter::<R>::new();
 
         for i in (0..n).step_by(2) {
-            debug_assert!(
-                other_v.len() > (i + 2),
-                "scrypt_ro_mix_interleaved_ex_zmm: other_v.len() <= i + 2"
-            );
-
-            let [src, dst, dst2] = unsafe { other_v.get_disjoint_unchecked_mut([i, i + 1, i + 2]) };
+            // SAFETY: the largest i value is n-1, so the largest index is n+1, which is in bounds after the >=n+2 check
+            let [src, middle, dst] =
+                unsafe { other_v.get_disjoint_unchecked_mut([i, i + 1, i + 2]) };
 
             scrypt_block_mix_mb2::<R, S, _, _, _, _>(
                 &*src,
-                &mut *dst,
+                &mut *middle,
+                // SAFETY: idx is & (n - 1) so it's always in bounds after the >=n check
                 (unsafe { self_v.get_unchecked(idx) }, &input_b),
                 &mut input_t,
             );
@@ -568,8 +612,9 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
 
             {
                 scrypt_block_mix_mb2::<R, S, _, _, _, _>(
-                    &*dst,
-                    &mut *dst2,
+                    &*middle,
+                    &mut *dst,
+                    // SAFETY: idx is & (n - 1) so it's always in bounds after the >=n check
                     (unsafe { self_v.get_unchecked(idx) }, &input_t),
                     &mut input_b,
                 );
@@ -663,6 +708,7 @@ impl<'a, R: ArrayLength, B: BlockType> ScryptBlockMixOutput<'a, R, B>
 }
 
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512vl"))]
+#[repr(align(64))]
 struct InRegisterAdapter<R: ArrayLength> {
     words: GenericArray<core::arch::x86_64::__m512i, Mul2<R>>,
 }
@@ -672,7 +718,7 @@ impl<R: ArrayLength> InRegisterAdapter<R> {
     #[inline(always)]
     fn new() -> Self {
         Self {
-            words: unsafe { core::mem::zeroed() },
+            words: unsafe { core::mem::MaybeUninit::uninit().assume_init() },
         }
     }
 

@@ -28,7 +28,10 @@ macro_rules! mm256_rol_epi32x {
 }
 
 #[cfg(all(target_arch = "x86_64", not(target_feature = "avx512vl")))]
-#[allow(unused_macros)]
+#[allow(
+    unused_macros,
+    reason = "compiler bug? it shows inactive but still warns even on AVX512VL builds"
+)]
 macro_rules! mm_rol_epi32x {
     ($w:expr, $amt:literal) => {{
         let w = $w;
@@ -37,7 +40,10 @@ macro_rules! mm_rol_epi32x {
 }
 
 #[cfg(all(target_arch = "x86_64", not(target_feature = "avx512vl")))]
-#[allow(unused_macros)]
+#[allow(
+    unused_macros,
+    reason = "compiler bug? it shows inactive but still warns even on AVX512VL builds"
+)]
 macro_rules! mm256_rol_epi32x {
     ($w:expr, $amt:literal) => {{
         let w = $w;
@@ -166,7 +172,10 @@ impl BlockType for __m512i {
     }
 }
 
-#[allow(unused_mut)]
+#[cfg_attr(
+    target_endian = "little",
+    expect(unused_mut, reason = "big endian machines need to swap bytes")
+)]
 impl BlockType for Align64<[u32; 16]> {
     unsafe fn read_from_ptr(ptr: *const Self) -> Self {
         let mut ret = unsafe { ptr.read() };
@@ -176,8 +185,7 @@ impl BlockType for Align64<[u32; 16]> {
             ret.0[i] = ret.0[i].swap_bytes();
         }
 
-        #[cfg(target_endian = "little")]
-        return ret;
+        ret
     }
     unsafe fn write_to_ptr(mut self, ptr: *mut Self) {
         #[cfg(target_endian = "big")]
@@ -195,15 +203,20 @@ impl BlockType for Align64<[u32; 16]> {
 }
 
 #[cfg(feature = "portable-simd")]
+#[cfg_attr(
+    target_endian = "little",
+    expect(unused_mut, reason = "big endian machines need to swap bytes")
+)]
 impl BlockType for core::simd::u32x16 {
     unsafe fn read_from_ptr(ptr: *const Self) -> Self {
-        let ret = unsafe { ptr.read() };
+        let mut ret = unsafe { ptr.read() };
 
         #[cfg(target_endian = "big")]
-        return ret.swap_bytes();
+        {
+            ret = ret.swap_bytes();
+        }
 
-        #[cfg(target_endian = "little")]
-        return ret;
+        ret
     }
     unsafe fn write_to_ptr(self, ptr: *mut Self) {
         #[cfg(target_endian = "big")]

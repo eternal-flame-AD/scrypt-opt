@@ -105,7 +105,7 @@ impl<T> HugeSlice<T> {
             if min_alloc_size == 0 {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::Other,
-                    "Allocation length is not zero",
+                    "Allocation size must be non-zero",
                 ));
             }
 
@@ -115,7 +115,9 @@ impl<T> HugeSlice<T> {
                     std::io::ErrorKind::Other,
                     "Large page not supported by the system",
                 ));
-            } else if large_page_minimum < core::mem::align_of::<T>() {
+            }
+
+            if large_page_minimum < core::mem::align_of::<T>() {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::Other,
                     format!(
@@ -127,18 +129,11 @@ impl<T> HugeSlice<T> {
                 ));
             }
 
-            if core::mem::align_of::<T>() > large_page_minimum {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    "Alignment of the type is greater than the large page minimum",
-                ));
-            }
-
             let mut token_handle = Default::default();
             if OpenProcessToken(
                 GetCurrentProcess(),
                 TOKEN_ADJUST_PRIVILEGES,
-                &raw mut token_handle,
+                &mut token_handle,
             ) == 0
             {
                 return Err(std::io::Error::last_os_error());
@@ -207,7 +202,12 @@ impl<T> HugeSlice<T> {
             if core::mem::align_of::<T>() > page_size {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::Other,
-                    "Alignment of the type is greater than the page size",
+                    format!(
+                        "Alignment of the type is greater than the page size: {} requires {} alignment, page size is {}",
+                        core::any::type_name::<T>(),
+                        core::mem::align_of::<T>(),
+                        page_size
+                    ),
                 ));
             }
 
@@ -216,7 +216,7 @@ impl<T> HugeSlice<T> {
             if alloc_min_len == 0 {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::Other,
-                    "Allocation length is not zero",
+                    "Allocation length must be non-zero",
                 ));
             }
 
@@ -234,9 +234,9 @@ impl<T> HugeSlice<T> {
                 ((page_size), 0),
             ]
             .into_iter()
-            .filter(|(size, _flags)| *size >= page_size)
-            // don't grossly over size
-            .filter(|(size, flags)| *flags == 0 || alloc_min_len * 2 > *size)
+            .filter(|(try_page_size, _flags)| *try_page_size >= page_size)
+            // don't grossly over size by capping page size at 2x amount of memory needed
+            .filter(|(try_page_size, flags)| *flags == 0 || alloc_min_len * 2 > *try_page_size)
             {
                 let try_size = alloc_min_len.next_multiple_of(try_page_size);
                 let ptr = libc::mmap64(

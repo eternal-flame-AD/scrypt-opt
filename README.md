@@ -34,6 +34,9 @@ Solve a 💥PoW! Bot Deterrent PoW:
 
 ```sh
 > scrypt-opt --num-threads 16 pow --target 0002 --salt KTlmPG9GFcM= --cf 14 --r 8
+spawning 16 threads for an estimated iteration count of 10922
+Nonce   Result  N       R       EstimatedCands  RealCands       Luck%   RealCPS
+cf40000000000000        08402d18d2ba3be9ee4b620f8a840000        16384   8       5461    16975   21.13   1310.7
 ```
 
 Spin loop and print throughput:

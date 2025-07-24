@@ -8,17 +8,17 @@ use generic_array::{
     ArrayLength,
     typenum::{
         B0, B1, Bit, NonZero, U1, U2, U3, U4, U5, U6, U7, U8, U9, U10, U11, U12, U13, U14, U15,
-        U16, U17, U18, U19, U20, U21, U22, U23, U24, U25, U26, U27, U28, U29, U30, U31, U32,
+        U16, U17, U18, U19, U20, U21, U22, U23, U24, U25, U26, U27, U28, U29, U30, U31, U32, U64,
     },
 };
 use scrypt_opt::{
     BufferSet,
-    cast::{
-        Case, CaseP1, CastN16R1P1, CastN1024R1P2, CastN1024R8P16, CastN16384R8P1, CastN1048576R8P1,
-    },
     memory::Align64,
     pbkdf2_1::Pbkdf2HmacSha256State,
     pipeline::PipelineContext,
+    self_test::{
+        Case, CaseP1, CastN16R1P1, CastN1024R1P2, CastN1024R8P16, CastN16384R8P1, CastN1048576R8P1,
+    },
 };
 
 #[cfg(feature = "core_affinity")]
@@ -33,6 +33,16 @@ use std::{
         atomic::{AtomicU64, AtomicUsize},
     },
 };
+
+#[rustfmt::skip]
+macro_rules! match_bool {
+    ($r:expr, $b:ident, $c:block) => {
+        match $r {
+            true => { type $b = B1; $c },
+            false => { type $b = B0; $c },
+        }
+    };
+}
 
 #[rustfmt::skip]
 macro_rules! match_r {
@@ -70,6 +80,7 @@ macro_rules! match_r {
             30 => { type $b = U30; Some($c) },
             31 => { type $b = U31; Some($c) },
             32 => { type $b = U32; Some($c) },
+            64 => { type $b = U64; Some($c) },
             _ => None,
         }
     };
@@ -141,6 +152,7 @@ struct Args {
     command: Command,
 }
 
+const SOLUTION_PENDING_SENTINEL: u64 = u64::MAX;
 const KAT_PASSWORD: [u8; 13] = *b"pleaseletmein";
 const KAT_SALT: &[u8] = b"SodiumChloride";
 const KAT_EXPECTED: [u8; 64] = [
@@ -211,7 +223,7 @@ struct PowResult {
     elapsed: std::time::Duration,
 }
 
-fn pow<R: ArrayLength + NonZero, LittleEndian: Bit>(
+fn pow<R: ArrayLength + NonZero, LittleEndian: Bit, OutputAtLeastU8: Bit>(
     salt: Box<[u8]>,
     cf: NonZeroU8,
     mask: NonZeroU64,
@@ -225,9 +237,7 @@ fn pow<R: ArrayLength + NonZero, LittleEndian: Bit>(
         nonce_len <= 8,
         "nonce length must be less than or equal to 8 for now"
     );
-    assert!(output.len() >= 8, "output length must be at least 8");
-
-    const SOLUTION_PENDING_SENTINEL: u64 = u64::MAX;
+    assert_eq!(output.len() >= 8, OutputAtLeastU8::BOOL);
 
     let required_blocks =
         scrypt_opt::BufferSet::<&mut [Align64<scrypt_opt::Block<R>>], R>::minimum_blocks(cf);
@@ -326,19 +336,19 @@ fn pow<R: ArrayLength + NonZero, LittleEndian: Bit>(
                     )
                 });
 
-            struct NonceState<R: ArrayLength + NonZero, LittleEndian: Bit> {
+            struct NonceState<R: ArrayLength + NonZero, LittleEndian: Bit, OutputAtLeastU8: Bit> {
                 nonce: u64,
                 hmac_state: Pbkdf2HmacSha256State,
-                _marker: PhantomData<(R, LittleEndian)>,
+                _marker: PhantomData<(R, LittleEndian, OutputAtLeastU8)>,
             }
 
-            impl<'a, 'b, R: ArrayLength + NonZero, LittleEndian: Bit>
+            impl<'a, 'b, R: ArrayLength + NonZero, LittleEndian: Bit, OutputAtLeastU8: Bit>
                 PipelineContext<
                     (&'a Arc<State<R>>, &'b mut [u8]),
                     &mut [Align64<scrypt_opt::Block<R>>],
                     R,
                     bool,
-                > for NonceState<R, LittleEndian>
+                > for NonceState<R, LittleEndian, OutputAtLeastU8>
             {
                 #[inline(always)]
                 fn begin(
@@ -365,25 +375,41 @@ fn pow<R: ArrayLength + NonZero, LittleEndian: Bit>(
                         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
                     let mut new_solution = SOLUTION_PENDING_SENTINEL;
-                    let mut t = unsafe {
-                        state
-                            .1
-                            .as_ref()
-                            .as_ptr()
-                            .add(state.1.as_ref().len() - 8)
-                            .cast::<u64>()
-                            .read_unaligned()
-                    };
 
-                    if LittleEndian::BOOL {
-                        #[cfg(target_endian = "big")]
-                        {
-                            t = t.swap_bytes();
+                    let mut t = 0;
+
+                    if OutputAtLeastU8::BOOL {
+                        t = unsafe {
+                            state
+                                .1
+                                .as_ptr()
+                                .add(state.1.len() - 8)
+                                .cast::<u64>()
+                                .read_unaligned()
+                        };
+
+                        if LittleEndian::BOOL {
+                            #[cfg(target_endian = "big")]
+                            {
+                                t = t.swap_bytes();
+                            }
+                        } else {
+                            #[cfg(target_endian = "little")]
+                            {
+                                t = t.swap_bytes();
+                            }
                         }
                     } else {
-                        #[cfg(target_endian = "little")]
-                        {
-                            t = t.swap_bytes();
+                        if LittleEndian::BOOL {
+                            for i in (0..state.1.len()).rev() {
+                                t <<= 8;
+                                t |= state.1[i] as u64;
+                            }
+                        } else {
+                            for i in 0..state.1.len() {
+                                t <<= 8;
+                                t |= state.1[i] as u64;
+                            }
                         }
                     }
 
@@ -422,11 +448,10 @@ fn pow<R: ArrayLength + NonZero, LittleEndian: Bit>(
                 &mut buffers1,
                 ((thread_idx as u64)..=search_max)
                     .step_by(num_threads)
-                    .map(|i| NonceState::<R, LittleEndian> {
+                    .map(|i| NonceState::<R, LittleEndian, OutputAtLeastU8> {
                         nonce: i,
-                        hmac_state: unsafe {
-                            Pbkdf2HmacSha256State::new_short(&i.to_le_bytes()[..nonce_len])
-                                .unwrap_unchecked()
+                        hmac_state: {
+                            Pbkdf2HmacSha256State::new_short(&i.to_le_bytes()[..nonce_len]).unwrap()
                         }, // SAFETY: i.to_le_bytes() is way less than 1 block
                         _marker: PhantomData,
                     }),
@@ -821,31 +846,21 @@ fn main() {
             }
             eprintln!("Nonce\tResult\tN\tR\tEstimatedCands\tRealCands\tLuck%\tRealCPS");
             let Some(output) = match_r!(r, R, {
-                if little_endian {
-                    pow::<R, B1>(
-                        salt_decoded.into_boxed_slice(),
-                        cf,
-                        target_mask,
-                        target_u64,
-                        num_threads,
-                        output,
-                        nonce_len,
-                        #[cfg(feature = "core_affinity")]
-                        core_stride,
-                    )
-                } else {
-                    pow::<R, B0>(
-                        salt_decoded.into_boxed_slice(),
-                        cf,
-                        target_mask,
-                        target_u64,
-                        num_threads,
-                        output,
-                        nonce_len,
-                        #[cfg(feature = "core_affinity")]
-                        core_stride,
-                    )
-                }
+                match_bool!(output_len >= 8, OutputAtLeastU8, {
+                    match_bool!(little_endian, LittleEndian, {
+                        pow::<R, LittleEndian, OutputAtLeastU8>(
+                            salt_decoded.into_boxed_slice(),
+                            cf,
+                            target_mask,
+                            target_u64,
+                            num_threads,
+                            output,
+                            nonce_len,
+                            #[cfg(feature = "core_affinity")]
+                            core_stride,
+                        )
+                    })
+                })
             })
             .expect("invalid/unsupported r value") else {
                 panic!("no solution found");

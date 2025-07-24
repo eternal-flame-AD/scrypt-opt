@@ -161,6 +161,7 @@ pub fn scrypt_wasm(password: &[u8], salt: &[u8], n: u32, r: u32, p: u32, dklen: 
         return String::from("dklen must be non-zero");
     }
 
+    // allocate once and hex encode it in place
     let mut result: Vec<u8> = vec![0; dklen * 2];
     if !scrypt(password, salt, log2_n, r, p, &mut result[dklen..]) {
         return String::from("Unsupported r value");
@@ -180,5 +181,5 @@ pub fn scrypt_wasm(password: &[u8], salt: &[u8], n: u32, r: u32, p: u32, dklen: 
             b'a' + low_nibble - 10
         };
     }
-    unsafe { String::from_utf8_unchecked(result) }
+    String::from_utf8(result).unwrap()
 }
