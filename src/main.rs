@@ -13,12 +13,12 @@ use generic_array::{
 };
 use scrypt_opt::{
     BufferSet,
-    cast::{
-        Case, CaseP1, CastN16R1P1, CastN1024R1P2, CastN1024R8P16, CastN16384R8P1, CastN1048576R8P1,
-    },
     memory::Align64,
     pbkdf2_1::Pbkdf2HmacSha256State,
     pipeline::PipelineContext,
+    self_test::{
+        Case, CaseP1, CastN16R1P1, CastN1024R1P2, CastN1024R8P16, CastN16384R8P1, CastN1048576R8P1,
+    },
 };
 
 #[cfg(feature = "core_affinity")]

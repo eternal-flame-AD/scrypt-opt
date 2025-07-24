@@ -16,16 +16,6 @@ const IV: [u32; 8] = [
 const OPAD: u8 = 0x5c;
 const IPAD: u8 = 0x36;
 
-#[rustfmt::skip]
-macro_rules! repeat4 {
-    ($i:ident, $c:block) => {
-        { let $i = 0; $c; }
-        { let $i = 1; $c; }
-        { let $i = 2; $c; }
-        { let $i = 3; $c; }
-    };
-}
-
 #[derive(Clone)]
 struct SoftSha256 {
     words: [u32; 8],
