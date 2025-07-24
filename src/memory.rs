@@ -406,7 +406,8 @@ impl<T> MaybeHugeSlice<T> {
     pub fn new_huge_slice_zeroed(len: usize) -> Result<Self, std::io::Error> {
         let b: HugeSlice<core::mem::MaybeUninit<T>> = HugeSlice::new(len)?;
         unsafe {
-            core::slice::from_raw_parts_mut(b.ptr.cast::<u8>(), core::mem::size_of::<T>()).fill(0);
+            core::slice::from_raw_parts_mut(b.ptr.cast::<u8>(), len * core::mem::size_of::<T>())
+                .fill(0);
             Ok(MaybeHugeSlice::Huge(b.assume_init()))
         }
     }

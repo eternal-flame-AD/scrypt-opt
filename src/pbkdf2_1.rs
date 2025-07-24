@@ -259,6 +259,7 @@ impl Pbkdf2HmacSha256State {
                     idx += 1;
                     let inner_hash = inner_digest
                         .remainder_finalize(GenericArray::from_array(idx.to_be_bytes()));
+                    // write the inner hash as U32BE in natural byte order
                     repeat8!(k, {
                         tmp_block_outer[j][k] = u32::from_ne_bytes(inner_hash[k].to_be_bytes());
                     });
@@ -278,6 +279,7 @@ impl Pbkdf2HmacSha256State {
                 });
 
                 repeat4!(j, {
+                    // write the outer hash as U32BE in natural byte order
                     repeat8!(k, {
                         output_words[i + j * 8 + k] =
                             u32::from_ne_bytes(outer_hash[j][k].to_be_bytes());

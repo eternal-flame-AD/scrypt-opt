@@ -365,7 +365,6 @@ fn pow<R: ArrayLength + NonZero, LittleEndian: Bit>(
                         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
                     let mut new_solution = SOLUTION_PENDING_SENTINEL;
-                    // SAFETY: purposefully reading out of bounds, allocated 8 bytes extra for target
                     let mut t = unsafe {
                         state
                             .1
