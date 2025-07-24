@@ -1,3 +1,15 @@
+#![cfg_attr(
+    all(
+        target_arch = "x86_64",
+        target_feature = "avx512f",
+        feature = "portable-simd"
+    ),
+    allow(
+        unused,
+        reason = "APIs that allow switching cores in code are not exposed to the public API, yet"
+    )
+)]
+
 #[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::*;
 
@@ -77,27 +89,21 @@ macro_rules! quarter_ymmwords {
     };
 }
 
-#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
-// AVX only sequence, doesn't matter for now but if we want an AVX only solution we can reuse this
-macro_rules! mm256_shuffle_epi32 {
-    ($a:expr,$imm:literal) => {
-        _mm256_castps_si256(_mm256_permute_ps(_mm256_castsi256_ps($a), $imm))
-    };
-}
-
-// pivot to column-major order
+/// Pivot to column-major order
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
 static PIVOT: __m512i = unsafe {
     core::mem::transmute::<[u32; 16], __m512i>([
         0, 5, 10, 15, 4, 9, 14, 3, 8, 13, 2, 7, 12, 1, 6, 11,
     ])
 };
+/// Pivot two independent blocks into column-major order, extract A and B
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
 static PIVOT2_AB: __m512i = unsafe {
     core::mem::transmute::<[u32; 16], __m512i>([
         0, 5, 10, 15, 16, 21, 26, 31, 4, 9, 14, 3, 20, 25, 30, 19,
     ])
 };
+/// Pivot two independent blocks into column-major order, extract C and D
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
 static PIVOT2_CD: __m512i = unsafe {
     core::mem::transmute::<[u32; 16], __m512i>([
@@ -105,6 +111,7 @@ static PIVOT2_CD: __m512i = unsafe {
     ])
 };
 
+/// Do one round shuffle and pivot two independent blocks to row-major order
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
 static SHUFFLE_UNPIVOT2: __m512i = unsafe {
     core::mem::transmute::<[u32; 16], __m512i>([
@@ -113,7 +120,8 @@ static SHUFFLE_UNPIVOT2: __m512i = unsafe {
 };
 
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
-/// Extracts the parts that correspond to the first buffer from a0b0b1b1 and c0d0c1d1
+/// Do one round shuffle and pivot two independent blocks to row-major order,
+/// Then extract elements belonging to the first buffer
 static SHUFFLE_UNPIVOT2_0: __m512i = unsafe {
     core::mem::transmute::<[u32; 16], __m512i>([
         8, 0, 24, 16, 17, 9, 1, 25, 26, 18, 10, 2, 3, 27, 19, 11,
@@ -121,7 +129,8 @@ static SHUFFLE_UNPIVOT2_0: __m512i = unsafe {
 };
 
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
-/// Extracts the parts that correspond to the second buffer from a0b0b1b1 and c0d0c1d1
+/// Do one round shuffle and pivot two independent blocks to row-major order
+/// Then extract elements belonging to the second buffer
 static SHUFFLE_UNPIVOT2_1: __m512i = unsafe {
     core::mem::transmute::<[u32; 16], __m512i>([
         12, 4, 28, 20, 21, 13, 5, 29, 30, 22, 14, 6, 7, 31, 23, 15,
@@ -256,7 +265,7 @@ pub(crate) trait Salsa20 {
 }
 
 /// A scalar solution
-#[allow(unused)]
+#[allow(unused, reason = "Currently unused, but handy for testing")]
 pub struct BlockScalar<Lanes: ArrayLength> {
     w: GenericArray<[u32; 16], Lanes>,
 }
@@ -436,11 +445,11 @@ impl Salsa20 for BlockAvx512F2 {
 
                 // a stays in place
                 // b = left shuffle d by 1 element
-                let newb = mm256_shuffle_epi32!(self.d, 0b00111001);
+                let newb = _mm256_shuffle_epi32(self.d, 0b00111001);
                 // c = left shuffle c by 2 elements
-                self.c = mm256_shuffle_epi32!(self.c, 0b01001110);
+                self.c = _mm256_shuffle_epi32(self.c, 0b01001110);
                 // d = left shuffle b by 3 elements
-                self.d = mm256_shuffle_epi32!(self.b, 0b10010011);
+                self.d = _mm256_shuffle_epi32(self.b, 0b10010011);
                 self.b = newb;
             }
 
@@ -609,6 +618,7 @@ impl Salsa20 for BlockPortableSimd2 {
         self.d ^= simd_rotate_left::<_, 13>(self.c + self.b);
         self.a ^= simd_rotate_left::<_, 18>(self.d + self.c);
 
+        // this shuffle automatically gets combined on 512-bit platforms
         let a0b0 = core::simd::simd_swizzle!(self.a, self.b, [0, 1, 2, 3, 8, 9, 10, 11]);
         let a1b1 = core::simd::simd_swizzle!(self.a, self.b, [4, 5, 6, 7, 12, 13, 14, 15]);
         let c0d0 = core::simd::simd_swizzle!(self.c, self.d, [0, 1, 2, 3, 8, 9, 10, 11]);
