@@ -8,6 +8,6 @@
     "rust-analyzer.cargo.cfgs": [
         "debug_assertions",
         "miri",
-        "target_feature=avx512vl"
+        "target_feature=avx512f"
     ]
 }

@@ -322,7 +322,7 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
     /// Perform the RoMix operation using the default engine.
     pub fn scrypt_ro_mix(&mut self) {
         // If possible, redirect to the register resident implementation to avoid data access thrashing.
-        #[cfg(all(target_arch = "x86_64", target_feature = "avx512vl"))]
+        #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
         if R::USIZE <= 8 {
             self.scrypt_ro_mix_ex_zmm::<salsa20::BlockAvx512F>();
             return;
@@ -428,7 +428,7 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
     /// $RoMix_{Back}$ is performed on self and $RoMix_{Front}$ is performed on other.
     pub fn scrypt_ro_mix_interleaved(&mut self, other: &mut Self) {
         // If possible, steer to the register-resident AVX-512 implementation to avoid cache line thrashing.
-        #[cfg(all(target_arch = "x86_64", target_feature = "avx512vl"))]
+        #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
         if R::USIZE <= 8 {
             self.scrypt_ro_mix_interleaved_ex_zmm::<salsa20::BlockAvx512F2>(other);
             return;
@@ -479,7 +479,7 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
     }
 }
 
-#[cfg(all(target_arch = "x86_64", target_feature = "avx512vl"))]
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
 impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength + NonZero>
     BufferSet<Q, R>
 {
@@ -657,12 +657,12 @@ impl<'a, R: ArrayLength, B: BlockType> ScryptBlockMixOutput<'a, R, B>
     }
 }
 
-#[cfg(all(target_arch = "x86_64", target_feature = "avx512vl"))]
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
 struct InRegisterAdapter<R: ArrayLength> {
     words: GenericArray<core::arch::x86_64::__m512i, Mul2<R>>,
 }
 
-#[cfg(all(target_arch = "x86_64", target_feature = "avx512vl"))]
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
 impl<R: ArrayLength> InRegisterAdapter<R> {
     #[inline(always)]
     fn new() -> Self {
@@ -707,7 +707,7 @@ impl<R: ArrayLength> InRegisterAdapter<R> {
     }
 }
 
-#[cfg(all(target_arch = "x86_64", target_feature = "avx512vl"))]
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
 impl<'a, R: ArrayLength> ScryptBlockMixInput<'a, R, core::arch::x86_64::__m512i>
     for &'a InRegisterAdapter<R>
 {
@@ -717,7 +717,7 @@ impl<'a, R: ArrayLength> ScryptBlockMixInput<'a, R, core::arch::x86_64::__m512i>
     }
 }
 
-#[cfg(all(target_arch = "x86_64", target_feature = "avx512vl"))]
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
 impl<'a, R: ArrayLength> ScryptBlockMixOutput<'a, R, core::arch::x86_64::__m512i>
     for &'a mut InRegisterAdapter<R>
 {
@@ -870,7 +870,7 @@ mod tests {
 
     use super::*;
 
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx512vl"))]
+    #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
     fn test_ro_mix_cas_zmm<R: ArrayLength + NonZero>() {
         const CF: u8 = 8;
 
@@ -1109,7 +1109,7 @@ mod tests {
         assert_eq!(output, expected[15]);
     }
 
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx512vl"))]
+    #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
     fn test_ro_mix_cas_interleaved_zmm<R: ArrayLength + NonZero>() {
         const CF: u8 = 8;
 
@@ -1208,34 +1208,34 @@ mod tests {
     write_test!(test_ro_mix_cas_16, test_ro_mix_cas, U16);
     write_test!(test_ro_mix_cas_128, test_ro_mix_cas, U128);
 
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx512vl"))]
+    #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
     write_test!(test_ro_mix_cas_zmm_1, test_ro_mix_cas_zmm, U1);
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx512vl"))]
+    #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
     write_test!(test_ro_mix_cas_zmm_2, test_ro_mix_cas_zmm, U2);
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx512vl"))]
+    #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
     write_test!(test_ro_mix_cas_zmm_4, test_ro_mix_cas_zmm, U4);
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx512vl"))]
+    #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
     write_test!(test_ro_mix_cas_zmm_8, test_ro_mix_cas_zmm, U8);
 
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx512vl"))]
+    #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
     write_test!(
         test_ro_mix_cas_interleaved_zmm_1,
         test_ro_mix_cas_interleaved_zmm,
         U1
     );
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx512vl"))]
+    #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
     write_test!(
         test_ro_mix_cas_interleaved_zmm_2,
         test_ro_mix_cas_interleaved_zmm,
         U2
     );
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx512vl"))]
+    #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
     write_test!(
         test_ro_mix_cas_interleaved_zmm_4,
         test_ro_mix_cas_interleaved_zmm,
         U4
     );
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx512vl"))]
+    #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
     write_test!(
         test_ro_mix_cas_interleaved_zmm_8,
         test_ro_mix_cas_interleaved_zmm,

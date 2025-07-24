@@ -30,6 +30,7 @@ macro_rules! mm256_rol_epi32x {
 
 #[cfg(all(target_arch = "x86_64", not(target_feature = "avx512vl")))]
 #[allow(unused_macros)]
+// LLVM can rewrite this as _mm512_rol_epi32(_mm512_zextsi128_si512(w), $amt) automatically on AVX512F
 macro_rules! mm_rol_epi32x {
     ($w:expr, $amt:literal) => {{
         let w = $w;
@@ -39,6 +40,7 @@ macro_rules! mm_rol_epi32x {
 
 #[cfg(all(target_arch = "x86_64", not(target_feature = "avx512vl")))]
 #[allow(unused_macros)]
+// LLVM can rewrite this as _mm512_rol_epi32(_mm512_zextsi256_si512(w), $amt) automatically on AVX512F
 macro_rules! mm256_rol_epi32x {
     ($w:expr, $amt:literal) => {{
         let w = $w;
@@ -58,20 +60,20 @@ macro_rules! quarter_words {
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
 macro_rules! quarter_xmmwords {
     ($a:expr, $b:expr, $c:expr, $d:expr) => {
-        $b = _mm_xor_epi32($b, mm_rol_epi32x!(_mm_add_epi32($a, $d), 7));
-        $c = _mm_xor_epi32($c, mm_rol_epi32x!(_mm_add_epi32($b, $a), 9));
-        $d = _mm_xor_epi32($d, mm_rol_epi32x!(_mm_add_epi32($c, $b), 13));
-        $a = _mm_xor_epi32($a, mm_rol_epi32x!(_mm_add_epi32($d, $c), 18));
+        $b = _mm_xor_si128($b, mm_rol_epi32x!(_mm_add_epi32($a, $d), 7));
+        $c = _mm_xor_si128($c, mm_rol_epi32x!(_mm_add_epi32($b, $a), 9));
+        $d = _mm_xor_si128($d, mm_rol_epi32x!(_mm_add_epi32($c, $b), 13));
+        $a = _mm_xor_si128($a, mm_rol_epi32x!(_mm_add_epi32($d, $c), 18));
     };
 }
 
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
 macro_rules! quarter_ymmwords {
     ($a:expr, $b:expr, $c:expr, $d:expr) => {
-        $b = _mm256_xor_epi32($b, mm256_rol_epi32x!(_mm256_add_epi32($a, $d), 7));
-        $c = _mm256_xor_epi32($c, mm256_rol_epi32x!(_mm256_add_epi32($b, $a), 9));
-        $d = _mm256_xor_epi32($d, mm256_rol_epi32x!(_mm256_add_epi32($c, $b), 13));
-        $a = _mm256_xor_epi32($a, mm256_rol_epi32x!(_mm256_add_epi32($d, $c), 18));
+        $b = _mm256_xor_si256($b, mm256_rol_epi32x!(_mm256_add_epi32($a, $d), 7));
+        $c = _mm256_xor_si256($c, mm256_rol_epi32x!(_mm256_add_epi32($b, $a), 9));
+        $d = _mm256_xor_si256($d, mm256_rol_epi32x!(_mm256_add_epi32($c, $b), 13));
+        $a = _mm256_xor_si256($a, mm256_rol_epi32x!(_mm256_add_epi32($d, $c), 18));
     };
 }
 
@@ -107,6 +109,22 @@ static PIVOT2_CD: __m512i = unsafe {
 static SHUFFLE_UNPIVOT2: __m512i = unsafe {
     core::mem::transmute::<[u32; 16], __m512i>([
         0, 4, 16, 20, 21, 1, 5, 17, 18, 22, 2, 6, 7, 19, 23, 3,
+    ])
+};
+
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+/// Extracts the parts that correspond to the first buffer from a0b0b1b1 and c0d0c1d1
+static SHUFFLE_UNPIVOT2_0: __m512i = unsafe {
+    core::mem::transmute::<[u32; 16], __m512i>([
+        8, 0, 24, 16, 17, 9, 1, 25, 26, 18, 10, 2, 3, 27, 19, 11,
+    ])
+};
+
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+/// Extracts the parts that correspond to the second buffer from a0b0b1b1 and c0d0c1d1
+static SHUFFLE_UNPIVOT2_1: __m512i = unsafe {
+    core::mem::transmute::<[u32; 16], __m512i>([
+        12, 4, 28, 20, 21, 13, 5, 29, 30, 22, 14, 6, 7, 31, 23, 15,
     ])
 };
 
@@ -428,27 +446,14 @@ impl Salsa20 for BlockAvx512F2 {
 
             quarter_ymmwords!(self.a, self.b, self.c, self.d);
 
-            let a0b0 = _mm256_shuffle_i64x2(self.a, self.b, 0b00);
-            let a1b1 = _mm256_shuffle_i64x2(self.a, self.b, 0b11);
-            let c0d0 = _mm256_shuffle_i64x2(self.c, self.d, 0b00);
-            let c1d1 = _mm256_shuffle_i64x2(self.c, self.d, 0b11);
+            let a0a1b0b1 = _mm512_inserti64x4(_mm512_zextsi256_si512(self.b), self.a, 1);
+            let c0c1d0d1 = _mm512_inserti64x4(_mm512_zextsi256_si512(self.d), self.c, 1);
 
-            self.save0 = _mm512_add_epi32(
-                self.save0,
-                _mm512_permutex2var_epi32(
-                    _mm512_zextsi256_si512(a0b0),
-                    SHUFFLE_UNPIVOT2,
-                    _mm512_zextsi256_si512(c0d0),
-                ),
-            );
-            self.save1 = _mm512_add_epi32(
-                self.save1,
-                _mm512_permutex2var_epi32(
-                    _mm512_zextsi256_si512(a1b1),
-                    SHUFFLE_UNPIVOT2,
-                    _mm512_zextsi256_si512(c1d1),
-                ),
-            );
+            let w0_output = _mm512_permutex2var_epi32(a0a1b0b1, SHUFFLE_UNPIVOT2_0, c0c1d0d1);
+            let w1_output = _mm512_permutex2var_epi32(a0a1b0b1, SHUFFLE_UNPIVOT2_1, c0c1d0d1);
+
+            self.save0 = _mm512_add_epi32(self.save0, w0_output);
+            self.save1 = _mm512_add_epi32(self.save1, w1_output);
         }
     }
 }
@@ -731,37 +736,37 @@ mod tests {
         assert_eq!(output1, *expected1);
     }
 
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx512vl"))]
+    #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
     #[test]
     fn test_keystream_2() {
         test_keystream::<1>();
     }
 
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx512vl"))]
+    #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
     #[test]
     fn test_keystream_8() {
         test_keystream::<4>();
     }
 
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx512vl"))]
+    #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
     #[test]
     fn test_keystream_10() {
         test_keystream::<5>();
     }
 
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx512vl"))]
+    #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
     #[test]
     fn test_keystream_mb2_2() {
         test_keystream_mb2::<1>();
     }
 
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx512vl"))]
+    #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
     #[test]
     fn test_keystream_mb2_8() {
         test_keystream_mb2::<4>();
     }
 
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx512vl"))]
+    #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
     #[test]
     fn test_keystream_mb2_10() {
         test_keystream_mb2::<5>();

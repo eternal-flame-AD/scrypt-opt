@@ -7,7 +7,7 @@ use sha2::{
     digest::generic_array::GenericArray as RcGenericArray,
 };
 
-use crate::{Align64, Block, BlockU8, Mul2};
+use crate::{Align64, Block, BlockU8, Mul2, Mul128};
 
 const IV: [u32; 8] = [
     0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
@@ -172,9 +172,12 @@ impl Pbkdf2HmacSha256State {
         let mut inner_digest_prefix = self.inner_digest_words;
         let mut count_blocks = 1u64;
         for salt in salts {
-            let salt: &Align64<GenericArray<u8, _>> = salt.as_ref();
+            let salt: &Align64<GenericArray<u8, Mul128<R>>> = salt.as_ref();
             count_blocks += Mul2::<R>::U64;
 
+            // SAFETY: the type is guaranteed to be 64 * 2R bytes from the type constraint above
+            // this is just to transform the new GenericArray to RustCrypto's older GenericArray
+            // they are guaranteed to be the same representation ([0; 128R])
             let blocks = unsafe {
                 core::slice::from_raw_parts::<RcGenericArray<u8, rc_generic_array::typenum::U64>>(
                     salt.as_ptr().cast(),
