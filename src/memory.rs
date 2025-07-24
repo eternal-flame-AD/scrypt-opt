@@ -10,12 +10,62 @@ use crate::{Block, BlockU8};
 pub struct Align64<T>(pub T);
 
 impl<R: ArrayLength + NonZero> Align64<Block<R>> {
+    /// Perform a reference cast to an Align64<Block<R>> without checking the alignment.
+    ///
+    /// # Safety
+    /// This function is unsafe because it does not check the alignment of the input pointer.
+    #[inline(always)]
+    pub const unsafe fn new_unchecked(input: &R) -> &Self {
+        unsafe { &*(input as *const R as *const Self) }
+    }
+
+    /// Perform a reference cast to an Align64<Block<R>>.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the input pointer is not aligned to 64 bytes.
+    pub fn new(input: &R) -> &Self {
+        let ptr = input as *const R;
+        assert_eq!(
+            ptr.align_offset(64),
+            0,
+            "Input pointer is not aligned to 64 bytes"
+        );
+        unsafe { Self::new_unchecked(input) }
+    }
+
+    /// Perform a mutable reference cast to an Align64<Block<R>> without checking the alignment.
+    ///
+    /// # Safety
+    /// This function is unsafe because it does not check the alignment of the input pointer.
+    #[inline(always)]
+    pub const unsafe fn new_mut_unchecked(input: &mut R) -> &mut Self {
+        unsafe { &mut *(input as *mut R as *mut Self) }
+    }
+
+    /// Perform a mutable reference cast to an Align64<Block<R>>.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the input pointer is not aligned to 64 bytes.
+    pub fn new_mut(input: &mut R) -> &mut Self {
+        let ptr = input as *mut R;
+        assert_eq!(
+            ptr.align_offset(64),
+            0,
+            "Input pointer is not aligned to 64 bytes"
+        );
+        unsafe { Self::new_mut_unchecked(input) }
+    }
+
     /// Transmute the block buffer to a u8 array
+    #[inline(always)]
     pub const fn transmute_as_u8(&self) -> &Align64<BlockU8<R>> {
         unsafe { generic_array::const_transmute(&self.0) }
     }
 
     /// Transmute the block buffer to a mutable u8 array
+    #[inline(always)]
     pub const fn transmute_as_u8_mut(&mut self) -> &mut Align64<BlockU8<R>> {
         unsafe { generic_array::const_transmute(&mut self.0) }
     }

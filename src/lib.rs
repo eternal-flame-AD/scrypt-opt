@@ -153,7 +153,7 @@ pub type Block<R> = GenericArray<u32, Mul32<R>>;
 /// The type for one block for scrypt BlockMix operation (128 bytes/1R) as a u8 array
 pub type BlockU8<R> = GenericArray<u8, Mul128<R>>;
 
-#[derive(Default)]
+#[derive(Debug, Clone, Copy)]
 /// A set of buffers to do a single scrypt operation
 pub struct BufferSet<
     Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>,
@@ -163,11 +163,28 @@ pub struct BufferSet<
     _r: core::marker::PhantomData<R>,
 }
 
+impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]> + Default, R: ArrayLength + NonZero>
+    Default for BufferSet<Q, R>
+{
+    #[inline(always)]
+    fn default() -> Self {
+        Self::new(Q::default())
+    }
+}
+
 impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength + NonZero> AsRef<Q>
     for BufferSet<Q, R>
 {
     fn as_ref(&self) -> &Q {
         &self.v
+    }
+}
+
+impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength + NonZero> AsMut<Q>
+    for BufferSet<Q, R>
+{
+    fn as_mut(&mut self) -> &mut Q {
+        &mut self.v
     }
 }
 
@@ -265,16 +282,6 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
         })
     }
 
-    /// Get the inner buffer
-    pub fn inner(&self) -> &Q {
-        &self.v
-    }
-
-    /// Get the inner buffer mutably
-    pub fn inner_mut(&mut self) -> &mut Q {
-        &mut self.v
-    }
-
     /// Consume the buffer set and return the inner buffer
     pub fn into_inner(self) -> Q {
         self.v
@@ -328,6 +335,31 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
     #[inline(always)]
     pub fn extract_output(&self, hmac_state: &Pbkdf2HmacSha256State, output: &mut [u8]) {
         hmac_state.emit_gather([self.raw_salt_output().transmute_as_u8()], output);
+    }
+
+    /// Shorten the buffer set into a smaller buffer set and return the remainder as a slice,
+    /// handy if you want to make a large allocation for the largest N you want to use and reuse it for multiple Cost Factors.
+    ///
+    /// # Returns
+    ///
+    /// None if the number of blocks is less than the minimum number of blocks for the given Cost Factor.
+    #[inline(always)]
+    pub fn shorten(
+        &mut self,
+        cf: NonZeroU8,
+    ) -> Option<(
+        BufferSet<&mut [Align64<Block<R>>], R>,
+        &mut [Align64<Block<R>>],
+    )> {
+        let min_blocks = Self::minimum_blocks(cf);
+        let (set, rest) = self.v.as_mut().split_at_mut_checked(min_blocks)?;
+        Some((
+            BufferSet {
+                v: set,
+                _r: core::marker::PhantomData,
+            },
+            rest,
+        ))
     }
 
     /// Perform the RoMix operation using the default engine.
@@ -395,6 +427,7 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
         self.pipeline_drain_ex::<DefaultEngine1>();
     }
 
+    #[inline(always)]
     fn scrypt_ro_mix_interleaved_ex<S: Salsa20<Lanes = U2>>(&mut self, other: &mut Self) {
         let self_v = self.v.as_mut();
         let other_v = other.v.as_mut();
@@ -460,6 +493,10 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
     /// Perform the RoMix operation with interleaved buffers.
     ///
     /// $RoMix_{Back}$ is performed on self and $RoMix_{Front}$ is performed on other.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the buffers are of different equivalent Cost Factors.
     pub fn scrypt_ro_mix_interleaved(&mut self, other: &mut Self) {
         // If possible, steer to the register-resident AVX-512 implementation to avoid cache line thrashing.
         #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
@@ -534,7 +571,7 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
             let [src, dst] = unsafe { v.get_disjoint_unchecked_mut([i, i + 1]) };
             scrypt_block_mix::<R, S, _, _>(&*src, dst);
         }
-        scrypt_block_mix::<R, S, _, _>(&v[n - 1], &mut input_b);
+        scrypt_block_mix::<R, S, _, _>(unsafe { v.get_unchecked(n - 1) }, &mut input_b);
 
         let mut idx = input_b.extract_idx() as usize & (n - 1);
 
@@ -554,12 +591,17 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
             idx = input_b.extract_idx() as usize & (n - 1);
         }
 
-        input_b.write_back(&mut v[n]);
+        // SAFETY: n is in bounds after the >=n+1 check
+        input_b.write_back(unsafe { v.get_unchecked_mut(n) });
     }
 
     /// Perform a paired-halves RoMix operation with interleaved buffers using AVX-512 registers as temporary storage for the latter (this) half pipeline.
     ///
     /// The former half is performed on `other` and the latter half is performed on `self`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the buffers are of different equivalent Cost Factors.
     #[inline(always)]
     fn scrypt_ro_mix_interleaved_ex_zmm<
         S: Salsa20<Lanes = U2, Block = core::arch::x86_64::__m512i>,
@@ -581,29 +623,30 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
 
         // at least n+2 long, this is already enforced by n() so we can disable it for release builds
         debug_assert!(
-            other_v.len() >= n + 2,
-            "scrypt_ro_mix_interleaved_ex_zmm: other.v.len() < n + 2"
+            other_v.len() >= n + 1,
+            "scrypt_ro_mix_interleaved_ex_zmm: other.v.len() < n + 1"
         );
         // at least n+2 long, this is already enforced by n() so we can disable it for release builds
         debug_assert!(
-            self_v.len() >= n + 2,
-            "scrypt_ro_mix_interleaved_ex_zmm: self.v.len() < n + 2"
+            self_v.len() >= n + 1,
+            "scrypt_ro_mix_interleaved_ex_zmm: self.v.len() < n + 1"
         );
 
-        let mut idx = self_v[n][Mul32::<R>::USIZE - 16] as usize;
+        let mut idx = unsafe { self_v.get_unchecked(n)[Mul32::<R>::USIZE - 16] as usize };
         idx = idx & (n - 1);
-        let mut input_b = InRegisterAdapter::<R>::init_with_block(&self_v[n]);
+        let mut input_b =
+            InRegisterAdapter::<R>::init_with_block(unsafe { self_v.get_unchecked(n) });
         let mut input_t = InRegisterAdapter::<R>::new();
 
         for i in (0..n).step_by(2) {
-            // SAFETY: the largest i value is n-1, so the largest index is n+1, which is in bounds after the >=n+2 check
+            // SAFETY: the largest i value is n-2, so the largest index is n, which is in bounds after the >=n+1 check
             let [src, middle, dst] =
                 unsafe { other_v.get_disjoint_unchecked_mut([i, i + 1, i + 2]) };
 
             scrypt_block_mix_mb2::<R, S, _, _, _, _>(
                 &*src,
                 &mut *middle,
-                // SAFETY: idx is & (n - 1) so it's always in bounds after the >=n check
+                // SAFETY: idx is & (n - 1) so it's always in bounds after the >=n+1 check
                 (unsafe { self_v.get_unchecked(idx) }, &input_b),
                 &mut input_t,
             );
@@ -613,7 +656,7 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
                 scrypt_block_mix_mb2::<R, S, _, _, _, _>(
                     &*middle,
                     &mut *dst,
-                    // SAFETY: idx is & (n - 1) so it's always in bounds after the >=n check
+                    // SAFETY: idx is & (n - 1) so it's always in bounds after the >=n+1 check
                     (unsafe { self_v.get_unchecked(idx) }, &input_t),
                     &mut input_b,
                 );
@@ -622,7 +665,7 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
             }
         }
 
-        input_b.write_back(&mut self_v[n]);
+        input_b.write_back(unsafe { self_v.get_unchecked_mut(n) });
     }
 }
 

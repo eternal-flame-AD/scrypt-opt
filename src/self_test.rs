@@ -202,11 +202,11 @@ pub trait CaseP1 {
         assert_eq!(output0, Self::KNOWN_ANSWER);
         assert_eq!(output1, output_dummy);
 
-        buffer_set0.inner_mut().iter_mut().for_each(|b| {
+        buffer_set0.as_mut().iter_mut().for_each(|b| {
             b.fill(0);
         });
 
-        buffer_set1.inner_mut().iter_mut().for_each(|b| {
+        buffer_set1.as_mut().iter_mut().for_each(|b| {
             b.fill(0);
         });
     }
