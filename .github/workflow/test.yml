@@ -1,0 +1,53 @@
+name: Rust Unit Tests
+
+on:
+  push:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install cross compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mingw-w64 gcc-mingw-w64-x86-64-win32
+
+      - name: Dump /proc/cpuinfo
+        run: |
+          cat /proc/cpuinfo
+
+      - name: Install MSRV toolchain and GNU target
+        uses: dtolnay/rust-toolchain@1.89.0
+        with:
+          components: rust-src
+          targets: x86_64-unknown-linux-gnu
+
+      - name: Build
+        run: cargo build --verbose
+
+      - name: Run tests
+        run: cargo test --verbose
+
+      - name: Install nightly toolchain and GNU target
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rust-src
+          targets: x86_64-unknown-linux-gnu
+
+      - name: Build
+        run: cargo build --verbose
+
+      - name: Run tests
+        run: cargo test --verbose
+
+      - name: Build (portable-simd)
+        run: RUSTFLAGS="-C target-cpu=native" cargo build --verbose --features portable-simd
+
+      - name: Run tests (portable-simd)
+        run: RUSTFLAGS="-C target-cpu=native" cargo test --verbose --features portable-simd
