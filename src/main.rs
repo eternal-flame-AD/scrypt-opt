@@ -881,7 +881,7 @@ fn main() {
                     "\t{}\t{}\t{}\t{}\t{:.2}\t{:.1}",
                     1u32 << cf.get(),
                     r,
-                    estimated_cs / 2,
+                    estimated_cs,
                     output.actual_iterations,
                     pgeom_inv(output.actual_iterations, (estimated_cs as f64).recip()) * 100.0,
                     real_cps,

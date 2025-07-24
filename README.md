@@ -30,13 +30,20 @@ Algorithm Self Test (CAST):
 > scrypt-opt cast
 ```
 
+Compute a single key (uses pipelining if P>1)
+
+```sh
+echo -n "password" | scrypt-opt compute -s NaCl --cf 10 -r 8 -p 16
+/bq+HJ00cgB4VucZDQHp/nxq18vII3gw53N2Y0s3MWIurzDZLiKjiG/xCSedmDDaxyevuUqD7m2DYMvfoswGQA== 
+```
+
 Solve a 💥PoW! Bot Deterrent PoW:
 
 ```sh
 > scrypt-opt --num-threads 16 pow --target 0002 --salt KTlmPG9GFcM= --cf 14 --r 8
 spawning 16 threads for an estimated iteration count of 10922
 Nonce   Result  N       R       EstimatedCands  RealCands       Luck%   RealCPS
-cf40000000000000        08402d18d2ba3be9ee4b620f8a840000        16384   8       5461    16975   21.13   1310.7
+cf40000000000000        08402d18d2ba3be9ee4b620f8a840000        16384   8       10922    16975   21.13   1310.7
 ```
 
 Spin loop and print throughput:
