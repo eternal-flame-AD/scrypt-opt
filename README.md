@@ -34,6 +34,9 @@ Solve a 💥PoW! Bot Deterrent PoW:
 
 ```sh
 > scrypt-opt --num-threads 16 pow --target 0002 --salt KTlmPG9GFcM= --cf 14 --r 8
+spawning 16 threads for an estimated iteration count of 10922
+Nonce   Result  N       R       EstimatedCands  RealCands       Luck%   RealCPS
+cf40000000000000        08402d18d2ba3be9ee4b620f8a840000        16384   8       5461    16975   21.13   1310.7
 ```
 
 Spin loop and print throughput:
@@ -153,7 +156,7 @@ Traditional approaches focus on software prefetching, but scrypt is purposefully
 
 Instead, the optimal use of hardware is to perform one $RoMix_{Back}$ and one independent $RoMix_{Front}$ at once per thread. This ensures that when the inevitable DRAM latency hits in the $Vj$ access step, the processor has more work to do per block and thus has to track fewer outstanding memory requests before stalling. We can also increase power efficiency by zipping each $BlockMix$ operation from the two halves together and widening the Salsa20 core to 2 buffers. On platforms with advanced SIMD (AVX512) we can handle the permutation and extraction with high efficiency.
 
-We can also optimize this $X <- BlockMix(X xor Vj)$ step by ping-ponging between two buffers (and optionally keeping one of them in registers to babysit MLP to really focus on the hard part), this makes sure writes to the buffer will be immediately read back one $BlockMix$ cycle later and keep them naturally in cache without requiring high latency nontemporal instructions.
+We can also optimize this $X \leftarrow BlockMix(X \oplus V_j)$ step by ping-ponging between two buffers (and optionally keeping one of them in registers to babysit MLP to really focus on the hard part), this makes sure writes to the buffer will be immediately read back one $BlockMix$ round later and keep them naturally in cache without requiring high latency nontemporal instructions.
 
 Annotated Zen 4 build:
 
