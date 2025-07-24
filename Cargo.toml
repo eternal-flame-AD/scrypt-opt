@@ -1,0 +1,83 @@
+[package]
+name = "scrypt-opt"
+description = "A pure-rust optimized scrypt implementation for moderate to high difficulty cases, with an AVX512VL intrinsics core and a portable-simd core."
+edition = "2024"
+authors = ["Yumechi <yume@yumechi.jp>"]
+license = "Apache-2.0"
+version = "0.1.0"
+repository = "https://github.com/yumechi/scrypt-opt"
+documentation = "https://docs.rs/scrypt-opt"
+categories = ["cryptography", "cryptography::cryptocurrencies"]
+keywords = ["scrypt", "password-hashing", "proof-of-work", "mining"]
+
+
+[lib]
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[dependencies]
+sha2 = { version = "0.10", default-features = false, features = ["compress"] }
+generic-array = { version = "1.2", default-features = false }
+core_affinity = { version = "0.8", optional = true }
+clap = { version = "4.5", features = ["derive"], optional = true }
+base64 = { version = "0.22", optional = true }
+
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = { version = "0.2" }
+
+[target.'cfg(unix)'.dependencies]
+libc = { version = "0.2", optional = true }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.60", features = ["Win32_Security", "Win32_System_Memory", "Win32_System_Threading"], optional = true }
+
+[profile.release]
+lto = true
+opt-level = 3
+codegen-units = 1
+panic = "abort"
+strip = "symbols"
+
+[profile.release-with-debug]
+inherits = "release"
+debug = true
+strip = "none"
+
+[dev-dependencies]
+criterion = { version = "0.6", features = ["html_reports"] }
+pbkdf2 = "0.12"
+hmac = { version = "0.12", default-features = false }
+salsa20 = "0.10"
+scrypt = "0.11"
+
+[features]
+default = ["alloc"]
+std = ["alloc"]
+huge-page = ["dep:libc", "dep:windows-sys", "std"]
+alloc = []
+portable-simd = []
+core_affinity = ["std", "dep:core_affinity"]
+bin = ["std", "dep:base64", "dep:clap"]
+
+[[bench]]
+name = "bench_hash"
+harness = false
+required-features = ["std"]
+
+[[bin]]
+name = "scrypt-opt"
+path = "src/main.rs"
+required-features = ["bin"]
+
+[[example]]
+name = "cracker"
+path = "examples/cracker.rs"
+required-features = ["std"]
+
+[[example]]
+name = "large_p"
+path = "examples/large_p.rs"
+required-features = ["std"]
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = ["-O3", "--enable-bulk-memory", "--enable-simd"]

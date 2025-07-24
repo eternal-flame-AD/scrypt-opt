@@ -1,0 +1,13 @@
+{
+    "rust-analyzer.cargo.features": [
+        "std",
+        "bin",
+        "portable-simd",
+        "huge-page"
+    ],
+    "rust-analyzer.cargo.cfgs": [
+        "debug_assertions",
+        "miri",
+        "target_feature=avx512vl"
+    ]
+}
