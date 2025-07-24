@@ -168,34 +168,35 @@ We can also optimize this $X \leftarrow BlockMix(X \oplus V_j)$ step by ping-pon
 Annotated Zen 4 build:
 
 ```asm
-vmovdqa64 zmm1, zmmword ptr [rip + scrypt_opt::salsa20::PIVOT2_AB]        ; permutation constants stay in registers
-vmovdqa64 zmm2, zmmword ptr [rip + scrypt_opt::salsa20::PIVOT2_CD]
-vmovdqa64 zmm0, zmmword ptr [rip + scrypt_opt::salsa20::SHUFFLE_UNPIVOT2]
+vmovdqa64 zmm2, zmmword ptr [rip + scrypt_opt::salsa20::PIVOT2_AB]  ; permutation constants stay in registers
+vmovdqa64 zmm3, zmmword ptr [rip + scrypt_opt::salsa20::PIVOT2_CD]
+vmovdqa64 zmm4, zmmword ptr [rip + scrypt_opt::salsa20::SHUFFLE_UNPIVOT2_0]
+vmovdqa64 zmm5, zmmword ptr [rip + scrypt_opt::salsa20::SHUFFLE_UNPIVOT2_1]
+
 ; ...
-vpxord ymm13, ymm16, ymm13
-vpaddd ymm16, ymm13, ymm10
-vprold ymm16, ymm16, 18
-vpxord ymm9, ymm16, ymm9               ; last round of previous 2-buffer ARX, dual buffer version of the ARX+vpshufd stuff
-vinserti32x4 ymm16, ymm9, xmm12, 1     ; recombine results from two blocks
-vperm2i128 ymm9, ymm9, ymm12, 49       ; shuffle buffers back to input order
-vinserti128 ymm12, ymm10, xmm13, 1
-vperm2i128 ymm10, ymm10, ymm13, 49
-vpermt2d zmm16, zmm0, zmm12            ; combine the final Salsa20 shuffle and pivot back to row-major
-vpermt2d zmm9, zmm0, zmm10
-vpaddd zmm13, zmm16, zmm6              ; feedbacks
-vpaddd zmm16, zmm9, zmm4
-vmovdqa64 zmmword ptr [r11 - 960], zmm13      ; write the result back for the next block
-vpxord zmm4, zmm13, zmmword ptr [r11 - 1408]  ; XOR for X ← BlockMix(X xor Vj) step, X is already register resident
-vpternlogd zmm14, zmm16, zmmword ptr [r12 + r10 + 64], 150 ; 3-input AND-OR-XOR for RoMix_Front part
-vmovdqa64 zmm9, zmm4                          ; save the result for the next block feedback
-vpermt2d zmm9, zmm2, zmm14                    ; Distribute CD to column-major for the next block
-vmovdqa64 zmm6, zmm4                          ; save the result for the next block feedback
-vpermt2d zmm6, zmm1, zmm14                    ; Distribute AB to column-major for the next block
-vextracti64x4 ymm10, zmm9, 1                  ; split C and D for the next block
-vextracti64x4 ymm18, zmm6, 1                  ; split A and B for the next block
-vpaddd ymm12, ymm10, ymm6                     ; start 8 ARX rounds
-vprold ymm12, ymm12, 7
-vpxord ymm12, ymm12, ymm18
+
+vpaddd ymm21, ymm19, ymm18
+vprold ymm21, ymm21, 18
+vpxord ymm12, ymm12, ymm21                     ; last round of previous 2-buffer ARX, dual buffer version of the ARX+vpshufd stuff
+vinserti64x4 zmm20, zmm20, ymm12, 1            ; recombine results from two blocks
+vinserti64x4 zmm12, zmm19, ymm18, 1
+vmovdqa64 zmm18, zmm20
+vpermt2d zmm18, zmm4, zmm12                    ; combine the final Salsa20 shuffle and pivot back to row-major
+vpermt2d zmm20, zmm5, zmm12
+vpaddd zmm12, zmm18, zmm10                     ; feedbacks
+vpaddd zmm10, zmm20, zmm6
+vmovdqa64 zmmword ptr [rbx + r11 + 640], zmm12              ; write the result back for the next block
+vpxord zmm6, zmm12, zmmword ptr [rbx + r11 + 256]           ; XOR for X ← BlockMix(X xor Vj) step, X is already register resident
+vpternlogd zmm8, zmm10, zmmword ptr [r12 + r14 + 256], 150  ; 3-input AND-OR-XOR for RoMix_Front part
+vmovdqa64 zmm19, zmm6                                       ; save the result for the next block feedback
+vpermt2d zmm19, zmm3, zmm8                                  ; Distribute CD to column-major for the next block
+vmovdqa64 zmm18, zmm6                                       ; save the result for the next block feedback
+vpermt2d zmm18, zmm2, zmm8                                  ; Distribute AB to column-major for the next block
+vextracti64x4 ymm21, zmm19, 1
+vextracti64x4 ymm20, zmm18, 1
+vpaddd ymm22, ymm21, ymm18                                  ; Next Salsa20/8 rounds
+vprold ymm22, ymm22, 7
+vpxord ymm20, ymm20, ymm22
 ```
 
 ## License
