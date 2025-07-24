@@ -4,11 +4,6 @@
     no_std
 )]
 #![cfg_attr(feature = "portable-simd", feature(portable_simd))]
-#![allow(
-    stable_features,
-    reason = "Still on beta, 1 month to go until really stable"
-)]
-#![cfg_attr(target_arch = "x86_64", feature(stdarch_x86_avx512))]
 #![warn(missing_docs)]
 
 #[cfg(feature = "alloc")]

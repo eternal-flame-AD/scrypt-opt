@@ -51,7 +51,7 @@ salsa20 = "0.10"
 scrypt = "0.11"
 
 [features]
-default = ["alloc"]
+default = ["std"]
 std = ["alloc"]
 huge-page = ["dep:libc", "dep:windows-sys", "std"]
 alloc = []

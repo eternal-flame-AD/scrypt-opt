@@ -256,6 +256,9 @@ fn pow<R: ArrayLength + NonZero, LittleEndian: Bit>(
         eprintln!("WARNING: failed to allocate huge page: {}", e);
     }
 
+    #[cfg(not(feature = "huge-page"))]
+    let _ = huge_page_error;
+
     struct State<R: ArrayLength + NonZero> {
         full_slice: Arc<scrypt_opt::memory::MaybeHugeSlice<Align64<scrypt_opt::Block<R>>>>,
         salt: Box<[u8]>,

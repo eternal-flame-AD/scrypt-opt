@@ -1,6 +1,7 @@
 #[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::*;
 
+#[allow(unused_imports)]
 use generic_array::{
     ArrayLength, GenericArray,
     sequence::GenericSequence,
@@ -617,8 +618,9 @@ impl Salsa20 for BlockPortableSimd2 {
 }
 
 #[cfg(test)]
+#[allow(unused_imports)]
 mod tests {
-    use generic_array::typenum::U1;
+    use generic_array::{GenericArray, typenum::U1};
 
     use super::*;
 
