@@ -41,6 +41,7 @@ pub const IV: [u32; 8] = [
     0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
 ];
 
+#[allow(unused)]
 const K32: [u32; 64] = [
     0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
     0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
@@ -55,6 +56,7 @@ const K32: [u32; 64] = [
 /// Do a 4-way SHA-256 compression function without adding back the saved state, without feedback
 ///
 /// This is useful for making state share registers with a-h when caller has the previous state recalled cheaply from elsewhere after the fact
+#[allow(unused)]
 pub(crate) fn multiway_arx_mb4(state: &mut [__m128i; 8], mut block: [__m256i; 8]) {
     unsafe {
         let [a, b, c_outer, d_outer, e, f, g_outer, h_outer] = &mut *state;
