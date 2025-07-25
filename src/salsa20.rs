@@ -634,6 +634,10 @@ impl Salsa20 for BlockPortableSimd2 {
         }
 
         // this shuffle automatically gets combined on 512-bit platforms
+        // we will try to keep them in 128-bit lanes as much as possible
+        // so that it does not explode on platforms with only narrow SIMD
+        // the vast majority of 512-bit platforms is AVX512F which uses the dedicated
+        // core
         let a0b0 = core::simd::simd_swizzle!(a, b, [0, 1, 2, 3, 8, 9, 10, 11]);
         let a1b1 = core::simd::simd_swizzle!(a, b, [4, 5, 6, 7, 12, 13, 14, 15]);
         let c0d0 = core::simd::simd_swizzle!(c, d, [0, 1, 2, 3, 8, 9, 10, 11]);
