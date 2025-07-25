@@ -98,6 +98,9 @@ pub struct Pbkdf2HmacSha256State {
 }
 
 impl Pbkdf2HmacSha256State {
+    /// The maximum length of the password that can be used to create an HMAC state using the `Self::new_short` method
+    pub const MAX_SHORT_PASSWORD_LEN: usize = 64 - 9;
+
     #[inline(always)]
     /// Create a new PBKDF2-HMAC-SHA256 state from a password
     pub fn new(password: &[u8]) -> Self {
@@ -125,8 +128,10 @@ impl Pbkdf2HmacSha256State {
 
     #[inline(always)]
     /// Create a new PBKDF2-HMAC-SHA256 state from a password with a short key
+    ///
+    /// Returns `None` if and only if the password is longer than `Self::MAX_SHORT_PASSWORD_LEN`
     pub fn new_short(password: &[u8]) -> Option<Self> {
-        if password.len() > 64 - 9 {
+        if password.len() > Self::MAX_SHORT_PASSWORD_LEN {
             return None;
         }
 
@@ -357,10 +362,15 @@ mod tests {
         hmac_state.emit_scatter(b"SodiumChloride", [&mut output_scatter]);
         pbkdf2::pbkdf2_hmac::<sha2::Sha256>(b"LetMeIn1234", b"SodiumChloride", 1, &mut expected);
         assert_eq!(output_scatter, expected);
+        expected.fill(0);
+        pbkdf2::pbkdf2_hmac::<sha2::Sha256>(b"LetMeIn1234\0", b"SodiumChloride", 1, &mut expected);
+        assert_eq!(output_scatter, expected);
 
         hmac_state.emit_gather([&output_scatter], &mut output_gather);
         pbkdf2::pbkdf2_hmac::<sha2::Sha256>(b"LetMeIn1234", &output_scatter, 1, &mut expected);
-
+        assert_eq!(output_gather, expected);
+        expected.fill(0);
+        pbkdf2::pbkdf2_hmac::<sha2::Sha256>(b"LetMeIn1234\0", &output_scatter, 1, &mut expected);
         assert_eq!(output_gather, expected);
     }
 

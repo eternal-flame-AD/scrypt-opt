@@ -211,7 +211,7 @@ struct PowResult {
     elapsed: std::time::Duration,
 }
 
-fn pow<R: ArrayLength + NonZero, LittleEndian: Bit>(
+fn pow<R: ArrayLength + NonZero>(
     salt: Box<[u8]>,
     cf: NonZeroU8,
     mask: NonZeroU64,
@@ -222,10 +222,10 @@ fn pow<R: ArrayLength + NonZero, LittleEndian: Bit>(
     #[cfg(feature = "core_affinity")] core_stride: NonZeroUsize,
 ) -> Option<PowResult> {
     assert!(
-        nonce_len <= 8,
-        "nonce length must be less than or equal to 8 for now"
+        nonce_len <= Pbkdf2HmacSha256State::MAX_SHORT_PASSWORD_LEN,
+        "nonce length must be less than or equal to {} for now",
+        Pbkdf2HmacSha256State::MAX_SHORT_PASSWORD_LEN
     );
-    assert!(output.len() >= 8, "output length must be at least 8");
 
     const SOLUTION_PENDING_SENTINEL: u64 = u64::MAX;
 
@@ -264,6 +264,7 @@ fn pow<R: ArrayLength + NonZero, LittleEndian: Bit>(
         salt: Box<[u8]>,
         mask: NonZeroU64,
         target: u64,
+        offset: isize,
         min_nonce: AtomicU64,
         retired_count: AtomicU64,
         failed_threads: AtomicUsize,
@@ -276,6 +277,7 @@ fn pow<R: ArrayLength + NonZero, LittleEndian: Bit>(
         salt,
         mask,
         target,
+        offset: output_len as isize - 8,
         min_nonce: AtomicU64::new(SOLUTION_PENDING_SENTINEL),
         retired_count: AtomicU64::new(0),
         failed_threads: AtomicUsize::new(num_threads),
@@ -303,7 +305,29 @@ fn pow<R: ArrayLength + NonZero, LittleEndian: Bit>(
                 eprintln!("No core affinity available for thread {}", thread_idx);
             }
 
-            let mut local_output = vec![0u8; output_len];
+            // pad front and back 8 bytes to ensure all possible reads are aligned
+            // the lowest possible output length is 0, which gives an offset of -8, which needs to be in bounds
+            let alloc_len = 8 + output_len + 8;
+            let mut local_output = vec![0u8; alloc_len].into_boxed_slice();
+            let alloc_start = local_output.as_ptr();
+            let alignment_offset = unsafe {
+                local_output
+                    .as_mut_ptr()
+                    .offset(state.offset)
+                    .align_offset(8)
+            };
+            assert!(
+                unsafe { local_output.as_ptr().offset(state.offset) >= alloc_start },
+                "sanity check failed: local_output.as_ptr().offset(state.offset) >= alloc_start"
+            );
+            assert!(
+                unsafe {
+                    local_output.as_ptr().offset(state.offset).add(8) < alloc_start.add(alloc_len)
+                },
+                "sanity check failed: local_output.as_ptr().offset(state.offset).add(8) < alloc_start.add(alloc_len)"
+            );
+            // slice out the middle portion for operations
+            let local_output = &mut local_output[8 + alignment_offset..][..output_len];
 
             let mut buffers0 =
                 scrypt_opt::BufferSet::<&mut [Align64<scrypt_opt::Block<R>>], R>::new(unsafe {
@@ -329,27 +353,27 @@ fn pow<R: ArrayLength + NonZero, LittleEndian: Bit>(
                     )
                 });
 
-            struct NonceState<R: ArrayLength + NonZero, LittleEndian: Bit> {
+            struct NonceState<R: ArrayLength + NonZero> {
                 nonce: u64,
                 hmac_state: Pbkdf2HmacSha256State,
-                _marker: PhantomData<(R, LittleEndian)>,
+                _marker: PhantomData<R>,
             }
 
-            impl<'a, 'b, R: ArrayLength + NonZero, LittleEndian: Bit>
+            impl<'a, 'b, R: ArrayLength + NonZero>
                 PipelineContext<
                     (&'a Arc<State<R>>, &'b mut [u8]),
                     &mut [Align64<scrypt_opt::Block<R>>],
                     R,
                     bool,
-                > for NonceState<R, LittleEndian>
+                > for NonceState<R>
             {
                 #[inline(always)]
                 fn begin(
                     &mut self,
-                    state: &mut (&'a Arc<State<R>>, &'b mut [u8]),
+                    (pipeline_state, _local_output): &mut (&'a Arc<State<R>>, &'b mut [u8]),
                     buffer_set: &mut BufferSet<&mut [Align64<scrypt_opt::Block<R>>], R>,
                 ) -> Option<bool> {
-                    buffer_set.set_input(&self.hmac_state, &state.0.salt);
+                    buffer_set.set_input(&self.hmac_state, &pipeline_state.salt);
 
                     None
                 }
@@ -357,48 +381,40 @@ fn pow<R: ArrayLength + NonZero, LittleEndian: Bit>(
                 #[inline(always)]
                 fn drain(
                     self,
-                    state: &mut (&'a Arc<State<R>>, &'b mut [u8]),
+                    (pipeline_state, local_output): &mut (&'a Arc<State<R>>, &'b mut [u8]),
                     buffer_set: &mut scrypt_opt::BufferSet<&mut [Align64<scrypt_opt::Block<R>>], R>,
                 ) -> Option<bool> {
-                    buffer_set.extract_output(&self.hmac_state, &mut state.1.as_mut());
+                    buffer_set.extract_output(&self.hmac_state, local_output);
 
-                    state
-                        .0
+                    pipeline_state
                         .retired_count
                         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
                     let mut new_solution = SOLUTION_PENDING_SENTINEL;
                     // SAFETY: purposefully reading out of bounds, allocated 8 bytes extra for target
+                    //
+                    // pointer is manually aligned to 8 bytes at the start of the function
                     let mut t = unsafe {
-                        state
-                            .1
-                            .as_ref()
+                        local_output
                             .as_ptr()
-                            .add(state.1.as_ref().len() - 8)
+                            .offset(pipeline_state.offset)
                             .cast::<u64>()
-                            .read_unaligned()
+                            .read()
                     };
 
-                    if LittleEndian::BOOL {
-                        #[cfg(target_endian = "big")]
-                        {
-                            t = t.swap_bytes();
-                        }
-                    } else {
-                        #[cfg(target_endian = "little")]
-                        {
-                            t = t.swap_bytes();
-                        }
+                    #[cfg(target_endian = "little")]
+                    {
+                        t = t.swap_bytes();
                     }
 
-                    t &= state.0.mask.get();
+                    t &= pipeline_state.mask.get();
 
-                    let succeeded = t <= state.0.target;
+                    let succeeded = t <= pipeline_state.target;
                     if succeeded {
                         new_solution = self.nonce;
                     }
 
-                    let xchg = state.0.min_nonce.compare_exchange_weak(
+                    let xchg = pipeline_state.min_nonce.compare_exchange_weak(
                         SOLUTION_PENDING_SENTINEL,
                         new_solution,
                         std::sync::atomic::Ordering::Release,
@@ -407,7 +423,9 @@ fn pow<R: ArrayLength + NonZero, LittleEndian: Bit>(
 
                     // a solution was already found, do nothing and exit quietly
                     if xchg.is_err()
-                        && state.0.min_nonce.load(std::sync::atomic::Ordering::Relaxed)
+                        && pipeline_state
+                            .min_nonce
+                            .load(std::sync::atomic::Ordering::Relaxed)
                             != SOLUTION_PENDING_SENTINEL
                     {
                         return Some(false);
@@ -426,15 +444,16 @@ fn pow<R: ArrayLength + NonZero, LittleEndian: Bit>(
                 &mut buffers1,
                 ((thread_idx as u64)..=search_max)
                     .step_by(num_threads)
-                    .map(|i| NonceState::<R, LittleEndian> {
+                    .map(|i| NonceState::<R> {
                         nonce: i,
+                        // SAFETY: i.to_le_bytes() is way less than 1 SHA-256 block, so we can safely unwrap without checking
                         hmac_state: unsafe {
-                            Pbkdf2HmacSha256State::new_short(&i.to_le_bytes()[..nonce_len])
-                                .unwrap_unchecked()
-                        }, // SAFETY: i.to_le_bytes() is way less than 1 block
+                            // we do not need to [..nonce_len] because HMAC(short_key) = HMAC(short_key || 0)
+                            Pbkdf2HmacSha256State::new_short(&i.to_le_bytes()).unwrap_unchecked()
+                        },
                         _marker: PhantomData,
                     }),
-                &mut (&state, &mut local_output),
+                &mut (&state, local_output),
             );
 
             if let Some(is_leader) = result {
@@ -825,40 +844,28 @@ fn main() {
             }
             eprintln!("Nonce\tResult\tN\tR\tEstimatedCands\tRealCands\tLuck%\tRealCPS");
             let Some(output) = match_r!(r, R, {
-                if little_endian {
-                    pow::<R, B1>(
-                        salt_decoded.into_boxed_slice(),
-                        cf,
-                        target_mask,
-                        target_u64,
-                        num_threads,
-                        output,
-                        nonce_len,
-                        #[cfg(feature = "core_affinity")]
-                        core_stride,
-                    )
-                } else {
-                    pow::<R, B0>(
-                        salt_decoded.into_boxed_slice(),
-                        cf,
-                        target_mask,
-                        target_u64,
-                        num_threads,
-                        output,
-                        nonce_len,
-                        #[cfg(feature = "core_affinity")]
-                        core_stride,
-                    )
-                }
+                pow::<R>(
+                    salt_decoded.into_boxed_slice(),
+                    cf,
+                    target_mask,
+                    target_u64,
+                    num_threads,
+                    output,
+                    nonce_len,
+                    #[cfg(feature = "core_affinity")]
+                    core_stride,
+                )
             })
             .expect("invalid/unsupported r value") else {
                 panic!("no solution found");
             };
 
             let mut stdout = std::io::stdout();
+            let mut output_nonce = [0u8; Pbkdf2HmacSha256State::MAX_SHORT_PASSWORD_LEN];
+            output_nonce[..8].copy_from_slice(&output.nonce.to_le_bytes());
             if quiet {
                 for i in 0..nonce_len {
-                    write!(stdout, "{:02x}", output.nonce.to_le_bytes()[i]).unwrap();
+                    write!(stdout, "{:02x}", output_nonce[i]).unwrap();
                 }
                 write!(stdout, "\t").unwrap();
                 for word in output.output {
@@ -867,9 +874,8 @@ fn main() {
                 write!(stdout, "\n").unwrap();
                 stdout.flush().unwrap();
             } else {
-                let nonce_bytes = output.nonce.to_le_bytes();
                 for i in 0..nonce_len {
-                    write!(stdout, "{:02x}", nonce_bytes[i]).unwrap();
+                    write!(stdout, "{:02x}", output_nonce[i]).unwrap();
                 }
                 write!(stdout, "\t").unwrap();
                 for word in output.output {
