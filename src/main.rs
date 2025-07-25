@@ -417,15 +417,21 @@ fn pow<R: ArrayLength + NonZero>(
                 &mut buffers1,
                 ((thread_idx as u64)..=search_max)
                     .step_by(num_threads)
-                    .take_while(|_| !state.stop_signal.load(std::sync::atomic::Ordering::Relaxed))
-                    .map(|i| NonceState::<R> {
-                        nonce: i,
-                        // SAFETY: i.to_le_bytes() is way less than 1 SHA-256 block, so we can safely unwrap without checking
-                        hmac_state: unsafe {
-                            // we do not need to [..nonce_len] because HMAC(short_key) = HMAC(short_key || 0)
-                            Pbkdf2HmacSha256State::new_short(&i.to_le_bytes()).unwrap_unchecked()
-                        },
-                        _marker: PhantomData,
+                    .map_while(|i| {
+                        if state.stop_signal.load(std::sync::atomic::Ordering::Relaxed) {
+                            return None;
+                        }
+
+                        Some(NonceState::<R> {
+                            nonce: i,
+                            // SAFETY: i.to_le_bytes() is way less than 1 SHA-256 block, so we can safely unwrap without checking
+                            hmac_state: unsafe {
+                                // we do not need to [..nonce_len] because HMAC(short_key) = HMAC(short_key || 0)
+                                Pbkdf2HmacSha256State::new_short(&i.to_le_bytes())
+                                    .unwrap_unchecked()
+                            },
+                            _marker: PhantomData,
+                        })
                     }),
                 &mut (&state, local_output),
             );
