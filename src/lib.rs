@@ -1040,9 +1040,8 @@ mod tests {
                     &mut self,
                     _ratchet: &mut usize,
                     buffer_set: &mut BufferSet<Vec<Align64<Block<R>>>, R>,
-                ) -> Option<()> {
+                ) {
                     buffer_set.set_input(&Pbkdf2HmacSha256State::new(self.password), self.salt);
-                    None
                 }
 
                 fn drain(

@@ -12,9 +12,7 @@ pub trait PipelineContext<
 >
 {
     /// Called to initialize each computation.
-    ///
-    /// Returns `Some(K)` if the computation should be terminated.
-    fn begin(&mut self, state: &mut S, buffer_set: &mut BufferSet<Q, R>) -> Option<K>;
+    fn begin(&mut self, state: &mut S, buffer_set: &mut BufferSet<Q, R>);
 
     /// Called to process the result of each computation.
     ///
@@ -31,9 +29,8 @@ impl<
 > PipelineContext<S, Q, R, ()> for (&'a Align64<Block<R>>, &'b mut Align64<Block<R>>)
 {
     #[inline(always)]
-    fn begin(&mut self, _state: &mut S, buffer_set: &mut BufferSet<Q, R>) -> Option<()> {
+    fn begin(&mut self, _state: &mut S, buffer_set: &mut BufferSet<Q, R>) {
         buffer_set.input_buffer_mut().copy_from_slice(self.0);
-        None
     }
 
     #[inline(always)]
@@ -52,9 +49,8 @@ impl<
 > PipelineContext<S, Q, R, ()> for (&'a Align64<Block<R>>, &'b mut Align64<BlockU8<R>>)
 {
     #[inline(always)]
-    fn begin(&mut self, _state: &mut S, buffer_set: &mut BufferSet<Q, R>) -> Option<()> {
+    fn begin(&mut self, _state: &mut S, buffer_set: &mut BufferSet<Q, R>) {
         buffer_set.input_buffer_mut().copy_from_slice(self.0);
-        None
     }
 
     #[inline(always)]
