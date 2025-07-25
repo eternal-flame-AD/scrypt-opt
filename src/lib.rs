@@ -48,6 +48,9 @@ pub mod memory;
 /// Salsa20 kernels
 pub(crate) mod salsa20;
 
+/// SIMD utilities
+pub(crate) mod simd;
+
 /// PBKDF2-HMAC-SHA256 implementation (1 iteration special case)
 pub mod pbkdf2_1;
 
