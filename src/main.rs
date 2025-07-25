@@ -277,7 +277,7 @@ fn pow<R: ArrayLength + NonZero>(
         salt,
         mask,
         target,
-        offset: output.len() as isize - 8,
+        offset: output_len as isize - 8,
         min_nonce: AtomicU64::new(SOLUTION_PENDING_SENTINEL),
         retired_count: AtomicU64::new(0),
         failed_threads: AtomicUsize::new(num_threads),
@@ -306,11 +306,16 @@ fn pow<R: ArrayLength + NonZero>(
             }
 
             // pad front and back 8 bytes to ensure all possible reads are aligned
+            // the lowest possible output length is 0, which gives an offset of -8, which needs to be in bounds
             let alloc_len = 8 + output_len + 8;
             let mut local_output = vec![0u8; alloc_len].into_boxed_slice();
             let alloc_start = local_output.as_ptr();
-            let alignment_offset =
-                unsafe { local_output.as_mut_ptr().add(output_len).align_offset(8) };
+            let alignment_offset = unsafe {
+                local_output
+                    .as_mut_ptr()
+                    .offset(state.offset)
+                    .align_offset(8)
+            };
             assert!(
                 unsafe { local_output.as_ptr().offset(state.offset) >= alloc_start },
                 "sanity check failed: local_output.as_ptr().offset(state.offset) >= alloc_start"
