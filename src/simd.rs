@@ -93,22 +93,7 @@ impl<const N: usize, T: Swizzle<N>> core::simd::Swizzle<N> for Inverse<N, T>
 where
     core::simd::LaneCount<N>: core::simd::SupportedLaneCount,
 {
-    const INDEX: [usize; N] = const {
-        let mut index = [0; N];
-        let mut i = 0;
-        while i < N {
-            let mut inverse = 0;
-            while inverse < N {
-                if T::INDEX[inverse] == i {
-                    index[i] = inverse;
-                    break;
-                }
-                inverse += 1;
-            }
-            i += 1;
-        }
-        index
-    };
+    const INDEX: [usize; N] = <Self as Swizzle<N>>::INDEX;
 }
 
 /// Compose two swizzles, the second swizzle is applied to the output of the first swizzle
@@ -128,6 +113,7 @@ impl<const N: usize, T: Swizzle<N>, U: Swizzle<N>> Swizzle<N> for Compose<N, T, 
     };
 }
 
+#[cfg(feature = "portable-simd")]
 impl<const N: usize, T: Swizzle<N>, U: Swizzle<N>> core::simd::Swizzle<N> for Compose<N, T, U>
 where
     core::simd::LaneCount<N>: core::simd::SupportedLaneCount,
