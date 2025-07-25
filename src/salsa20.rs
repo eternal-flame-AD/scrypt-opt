@@ -551,14 +551,14 @@ impl Salsa20 for BlockPortableSimd {
             return;
         }
 
-        let pivoted_save = Pivot::swizzle(self.save);
+        let pivoted = Pivot::swizzle(self.save);
 
-        let mut a = pivoted_save.extract::<0, 4>();
-        let mut b = pivoted_save.extract::<4, 4>();
-        let mut c = pivoted_save.extract::<8, 4>();
-        let mut d = pivoted_save.extract::<12, 4>();
+        let mut a = pivoted.extract::<0, 4>();
+        let mut b = pivoted.extract::<4, 4>();
+        let mut c = pivoted.extract::<8, 4>();
+        let mut d = pivoted.extract::<12, 4>();
 
-        for _ in 0..(ROUND_PAIRS * 2) {
+        for _ in 0..(ROUND_PAIRS * 2 - 1) {
             b ^= simd_rotate_left::<_, 7>(a + d);
             c ^= simd_rotate_left::<_, 9>(b + a);
             d ^= simd_rotate_left::<_, 13>(c + b);
@@ -570,12 +570,17 @@ impl Salsa20 for BlockPortableSimd {
             b = newb;
         }
 
+        b ^= simd_rotate_left::<_, 7>(a + d);
+        c ^= simd_rotate_left::<_, 9>(b + a);
+        d ^= simd_rotate_left::<_, 13>(c + b);
+        a ^= simd_rotate_left::<_, 18>(d + c);
+
         // straighten vectors
         let ab = Identity::<8>::concat_swizzle(a, b);
         let cd = Identity::<8>::concat_swizzle(c, d);
         let abcd = Identity::<16>::concat_swizzle(ab, cd);
 
-        self.save = Inverse::<_, Pivot>::swizzle(pivoted_save + abcd)
+        self.save += Compose::<_, RoundShuffleAbcd, Inverse<_, Pivot>>::swizzle(abcd);
     }
 }
 
@@ -621,7 +626,7 @@ impl Salsa20 for BlockPortableSimd2 {
         let mut c = ccdd.extract::<0, 8>();
         let mut d = ccdd.extract::<8, 8>();
 
-        for _ in 0..(ROUND_PAIRS * 2) {
+        for _ in 0..(ROUND_PAIRS * 2 - 1) {
             b ^= simd_rotate_left::<_, 7>(a + d);
             c ^= simd_rotate_left::<_, 9>(b + a);
             d ^= simd_rotate_left::<_, 13>(c + b);
@@ -633,18 +638,25 @@ impl Salsa20 for BlockPortableSimd2 {
             b = newb;
         }
 
+        b ^= simd_rotate_left::<_, 7>(a + d);
+        c ^= simd_rotate_left::<_, 9>(b + a);
+        d ^= simd_rotate_left::<_, 13>(c + b);
+        a ^= simd_rotate_left::<_, 18>(d + c);
+
         // this shuffle automatically gets combined on 512-bit platforms
         // we will try to keep them in 128-bit lanes as much as possible
         // so that it does not explode on platforms with only narrow SIMD
         // the vast majority of 512-bit platforms is AVX512F which uses the dedicated
         // core
+        // this shuffle automatically gets combined on 512-bit platforms
+        // this shuffle automatically gets combined on 512-bit platforms
         let a0b0 = core::simd::simd_swizzle!(a, b, [0, 1, 2, 3, 8, 9, 10, 11]);
         let a1b1 = core::simd::simd_swizzle!(a, b, [4, 5, 6, 7, 12, 13, 14, 15]);
         let c0d0 = core::simd::simd_swizzle!(c, d, [0, 1, 2, 3, 8, 9, 10, 11]);
         let c1d1 = core::simd::simd_swizzle!(c, d, [4, 5, 6, 7, 12, 13, 14, 15]);
 
-        let abcd = Inverse::<_, Pivot>::concat_swizzle(a0b0, c0d0);
-        let abcd1 = Inverse::<_, Pivot>::concat_swizzle(a1b1, c1d1);
+        let abcd = Compose::<_, RoundShuffleAbcd, Inverse<_, Pivot>>::concat_swizzle(a0b0, c0d0);
+        let abcd1 = Compose::<_, RoundShuffleAbcd, Inverse<_, Pivot>>::concat_swizzle(a1b1, c1d1);
 
         self.save0 = self.save0 + abcd;
         self.save1 = self.save1 + abcd1;

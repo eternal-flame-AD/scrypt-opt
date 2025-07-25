@@ -128,6 +128,21 @@ impl<const N: usize, T: Swizzle<N>, U: Swizzle<N>> Swizzle<N> for Compose<N, T, 
     };
 }
 
+impl<const N: usize, T: Swizzle<N>, U: Swizzle<N>> core::simd::Swizzle<N> for Compose<N, T, U>
+where
+    core::simd::LaneCount<N>: core::simd::SupportedLaneCount,
+{
+    const INDEX: [usize; N] = const {
+        let mut index = [0; N];
+        let mut i = 0;
+        while i < N {
+            index[i] = T::INDEX[U::INDEX[i]];
+            i += 1;
+        }
+        index
+    };
+}
+
 /// Extract u32 vectors from a vector of interleaved u32, extract higher numbered lanes if HIGH is true
 pub struct ExtractU32x2<const N: usize, const HIGH: bool>;
 
