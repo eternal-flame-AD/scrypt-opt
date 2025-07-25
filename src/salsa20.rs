@@ -1,8 +1,14 @@
 #![cfg_attr(
-    all(
-        target_arch = "x86_64",
-        target_feature = "avx512f",
-        feature = "portable-simd"
+    any(
+        all(
+            target_arch = "x86_64",
+            target_feature = "avx512f",
+            feature = "portable-simd"
+        ),
+        all(
+            not(feature = "portable-simd"),
+            not(all(target_arch = "x86_64", target_feature = "avx512f"))
+        )
     ),
     allow(
         unused,
@@ -22,9 +28,16 @@ use generic_array::{
 
 #[cfg(feature = "portable-simd")]
 #[allow(unused_imports)]
-use core::simd::{Swizzle, num::SimdUint, u32x4, u32x8, u32x16};
+use core::simd::{Swizzle as _, num::SimdUint, u32x4, u32x8, u32x16};
 
-use crate::Align64;
+#[allow(
+    unused_imports,
+    reason = "rust-analyzer doesn't consider -Ctarget-feature, silencing warnings"
+)]
+use crate::{
+    Align64,
+    simd::{Compose, ConcatLo, ExtractU32x2, Inverse, Swizzle},
+};
 
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512vl"))]
 macro_rules! mm_rol_epi32x {
@@ -90,83 +103,85 @@ macro_rules! quarter_ymmwords {
 }
 
 /// Pivot to column-major order
-#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
-static PIVOT: __m512i = unsafe {
-    core::mem::transmute::<[u32; 16], __m512i>([
-        0, 5, 10, 15, 4, 9, 14, 3, 8, 13, 2, 7, 12, 1, 6, 11,
-    ])
-};
-/// Pivot two independent blocks into column-major order, extract A and B
-#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
-static PIVOT2_AB: __m512i = unsafe {
-    core::mem::transmute::<[u32; 16], __m512i>([
-        0, 5, 10, 15, 16, 21, 26, 31, 4, 9, 14, 3, 20, 25, 30, 19,
-    ])
-};
-/// Pivot two independent blocks into column-major order, extract C and D
-#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
-static PIVOT2_CD: __m512i = unsafe {
-    core::mem::transmute::<[u32; 16], __m512i>([
-        8, 13, 2, 7, 24, 29, 18, 23, 12, 1, 6, 11, 28, 17, 22, 27,
-    ])
-};
-
-/// Do one round shuffle and pivot two independent blocks to row-major order
-#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
-static SHUFFLE_UNPIVOT2: __m512i = unsafe {
-    core::mem::transmute::<[u32; 16], __m512i>([
-        0, 4, 16, 20, 21, 1, 5, 17, 18, 22, 2, 6, 7, 19, 23, 3,
-    ])
-};
-
-#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
-/// Do one round shuffle and pivot two independent blocks to row-major order,
-/// Then extract elements belonging to the first buffer
-static SHUFFLE_UNPIVOT2_0: __m512i = unsafe {
-    core::mem::transmute::<[u32; 16], __m512i>([
-        8, 0, 24, 16, 17, 9, 1, 25, 26, 18, 10, 2, 3, 27, 19, 11,
-    ])
-};
-
-#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
-/// Do one round shuffle and pivot two independent blocks to row-major order
-/// Then extract elements belonging to the second buffer
-static SHUFFLE_UNPIVOT2_1: __m512i = unsafe {
-    core::mem::transmute::<[u32; 16], __m512i>([
-        12, 4, 28, 20, 21, 13, 5, 29, 30, 22, 14, 6, 7, 31, 23, 15,
-    ])
-};
-
-#[cfg(feature = "portable-simd")]
 struct Pivot;
 
-#[cfg(feature = "portable-simd")]
-impl core::simd::Swizzle<16> for Pivot {
+impl Swizzle<16> for Pivot {
     const INDEX: [usize; 16] = [0, 5, 10, 15, 4, 9, 14, 3, 8, 13, 2, 7, 12, 1, 6, 11];
 }
 
-#[cfg(feature = "portable-simd")]
+/// Pivot two independent blocks into column-major order, extract A and B
 struct Pivot2Ab;
+
+impl Swizzle<16> for Pivot2Ab {
+    const INDEX: [usize; 16] = const {
+        let mut index = [0; 16];
+        let mut i = 0;
+        while i < 16 {
+            let offset = if (i / 4) % 2 == 0 { 0 } else { 16 };
+            index[i] = <Pivot as Swizzle<16>>::INDEX[i / 8 * 4 + i % 4] + offset;
+            i += 1;
+        }
+        index
+    };
+}
+
+/// Pivot two independent blocks into column-major order, extract C and D
+struct Pivot2CdFlipped;
+
+impl Swizzle<16> for Pivot2CdFlipped {
+    const INDEX: [usize; 16] = const {
+        let mut index = [0; 16];
+        let mut i = 0;
+        while i < 16 {
+            let offset = if (i / 4) % 2 == 1 { 0 } else { 16 };
+            index[i] = <Pivot as Swizzle<16>>::INDEX[8 + i / 8 * 4 + i % 4] + offset;
+            i += 1;
+        }
+        index
+    };
+}
+
+/// Round shuffle the first 4 lanes of a vector of u32
+#[allow(unused, reason = "rust-analyzer spam, actually used")]
+struct RoundShuffleAbcd;
+
+impl Swizzle<16> for RoundShuffleAbcd {
+    const INDEX: [usize; 16] = const {
+        let mut index = [0; 16];
+        let mut i = 0;
+        while i < 4 {
+            index[i] = i;
+            i += 1;
+        }
+        while i < 8 {
+            index[i] = 12 + (i + 1) % 4;
+            i += 1;
+        }
+        while i < 12 {
+            index[i] = 8 + (i + 2) % 4;
+            i += 1;
+        }
+        while i < 16 {
+            index[i] = 4 + (i + 3) % 4;
+            i += 1;
+        }
+        index
+    };
+}
+
+#[cfg(feature = "portable-simd")]
+impl core::simd::Swizzle<16> for Pivot {
+    const INDEX: [usize; 16] = <Self as Swizzle<16>>::INDEX;
+}
 
 #[cfg(feature = "portable-simd")]
 impl core::simd::Swizzle<16> for Pivot2Ab {
-    const INDEX: [usize; 16] = [0, 5, 10, 15, 16, 21, 26, 31, 4, 9, 14, 3, 20, 25, 30, 19];
+    const INDEX: [usize; 16] = <Self as Swizzle<16>>::INDEX;
 }
 
 #[cfg(feature = "portable-simd")]
-struct Pivot2Cd;
-
-#[cfg(feature = "portable-simd")]
-impl core::simd::Swizzle<16> for Pivot2Cd {
-    const INDEX: [usize; 16] = [8, 13, 2, 7, 24, 29, 18, 23, 12, 1, 6, 11, 28, 17, 22, 27];
-}
-
-#[cfg(feature = "portable-simd")]
-struct Unpivot;
-
-#[cfg(feature = "portable-simd")]
-impl core::simd::Swizzle<16> for Unpivot {
-    const INDEX: [usize; 16] = [0, 4, 8, 12, 13, 1, 5, 9, 10, 14, 2, 6, 7, 11, 15, 3];
+impl core::simd::Swizzle<16> for Pivot2CdFlipped {
+    const INDEX: [usize; 16] = <Self as Swizzle<16>>::INDEX;
 }
 
 /// A trait for block types
@@ -285,7 +300,7 @@ impl<Lanes: ArrayLength> Salsa20 for BlockScalar<Lanes> {
     fn write(&self, mut ptr: GenericArray<&mut Self::Block, Lanes>) {
         for i in 0..Lanes::USIZE {
             for j in 0..16 {
-                ptr[i][j] = ptr[i][j].wrapping_add(self.w[i][j]);
+                ptr[i][j] = self.w[i][j];
             }
         }
     }
@@ -296,17 +311,25 @@ impl<Lanes: ArrayLength> Salsa20 for BlockScalar<Lanes> {
             return;
         }
 
+        let mut w = self.w.clone();
+
         for i in 0..Lanes::USIZE {
             for _ in 0..ROUND_PAIRS {
-                quarter_words!(self.w[i], 0, 4, 8, 12);
-                quarter_words!(self.w[i], 5, 9, 13, 1);
-                quarter_words!(self.w[i], 10, 14, 2, 6);
-                quarter_words!(self.w[i], 15, 3, 7, 11);
+                quarter_words!(w[i], 0, 4, 8, 12);
+                quarter_words!(w[i], 5, 9, 13, 1);
+                quarter_words!(w[i], 10, 14, 2, 6);
+                quarter_words!(w[i], 15, 3, 7, 11);
 
-                quarter_words!(self.w[i], 0, 1, 2, 3);
-                quarter_words!(self.w[i], 5, 6, 7, 4);
-                quarter_words!(self.w[i], 10, 11, 8, 9);
-                quarter_words!(self.w[i], 15, 12, 13, 14);
+                quarter_words!(w[i], 0, 1, 2, 3);
+                quarter_words!(w[i], 5, 6, 7, 4);
+                quarter_words!(w[i], 10, 11, 8, 9);
+                quarter_words!(w[i], 15, 12, 13, 14);
+            }
+        }
+
+        for i in 0..Lanes::USIZE {
+            for j in 0..16 {
+                self.w[i][j] = self.w[i][j].wrapping_add(w[i][j]);
             }
         }
     }
@@ -316,10 +339,6 @@ impl<Lanes: ArrayLength> Salsa20 for BlockScalar<Lanes> {
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
 pub struct BlockAvx512F {
     save: __m512i,
-    a: __m128i,
-    b: __m128i,
-    c: __m128i,
-    d: __m128i,
 }
 
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
@@ -329,22 +348,9 @@ impl Salsa20 for BlockAvx512F {
 
     #[inline(always)]
     fn read(ptr: GenericArray<&Self::Block, U1>) -> Self {
-        unsafe {
-            let w = *ptr[0];
-            let w_out = _mm512_permutexvar_epi32(PIVOT, w);
-            let a = _mm512_extracti32x4_epi32(w_out, 0);
-            let b = _mm512_extracti32x4_epi32(w_out, 1);
-            let c = _mm512_extracti32x4_epi32(w_out, 2);
-            let d = _mm512_extracti32x4_epi32(w_out, 3);
+        let w = *ptr[0];
 
-            Self {
-                save: w,
-                a,
-                b,
-                c,
-                d,
-            }
-        }
+        Self { save: w }
     }
 
     #[inline(always)]
@@ -359,27 +365,33 @@ impl Salsa20 for BlockAvx512F {
         }
 
         unsafe {
+            let t = _mm512_permutexvar_epi32(Pivot::INDEX_ZMM, self.save);
+            let mut a = _mm512_extracti32x4_epi32(t, 0);
+            let mut b = _mm512_extracti32x4_epi32(t, 1);
+            let mut c = _mm512_extracti32x4_epi32(t, 2);
+            let mut d = _mm512_extracti32x4_epi32(t, 3);
+
             for _ in 0..(ROUND_PAIRS * 2 - 1) {
-                quarter_xmmwords!(self.a, self.b, self.c, self.d);
+                quarter_xmmwords!(a, b, c, d);
 
                 // a stays in place
                 // b = left shuffle d by 1 element
-                let newb = _mm_shuffle_epi32(self.d, 0b00111001);
+                let newb = _mm_shuffle_epi32(d, 0b00111001);
                 // c = left shuffle c by 2 elements
-                self.c = _mm_shuffle_epi32(self.c, 0b01001110);
+                c = _mm_shuffle_epi32(c, 0b01001110);
                 // d = left shuffle b by 3 elements
-                self.d = _mm_shuffle_epi32(self.b, 0b10010011);
-                self.b = newb;
+                d = _mm_shuffle_epi32(b, 0b10010011);
+                b = newb;
             }
 
-            quarter_xmmwords!(self.a, self.b, self.c, self.d);
+            quarter_xmmwords!(a, b, c, d);
 
             self.save = _mm512_add_epi32(
                 self.save,
                 _mm512_permutex2var_epi32(
-                    _mm512_zextsi256_si512(_mm256_setr_m128i(self.a, self.b)),
-                    SHUFFLE_UNPIVOT2,
-                    _mm512_zextsi256_si512(_mm256_setr_m128i(self.c, self.d)),
+                    _mm512_zextsi256_si512(_mm256_setr_m128i(a, b)),
+                    ConcatLo::<_, Compose<_, RoundShuffleAbcd, Inverse<_, Pivot>>>::INDEX_ZMM,
+                    _mm512_zextsi256_si512(_mm256_setr_m128i(c, d)),
                 ),
             );
         }
@@ -389,12 +401,8 @@ impl Salsa20 for BlockAvx512F {
 /// A solution for 2 lanes of 512-bit blocks
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
 pub struct BlockAvx512F2 {
-    save0: __m512i,
-    save1: __m512i,
-    a: __m256i,
-    b: __m256i,
-    c: __m256i,
-    d: __m256i,
+    buf0: __m512i,
+    buf1: __m512i,
 }
 
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
@@ -404,33 +412,16 @@ impl Salsa20 for BlockAvx512F2 {
 
     #[inline(always)]
     fn read(ptr: GenericArray<&Self::Block, U2>) -> Self {
-        unsafe {
-            let w0 = *ptr[0];
-            let w1 = *ptr[1];
-
-            let aabb = _mm512_permutex2var_epi32(w0, PIVOT2_AB, w1);
-            let ccdd = _mm512_permutex2var_epi32(w0, PIVOT2_CD, w1);
-
-            let a = _mm512_extracti64x4_epi64(aabb, 0);
-            let b = _mm512_extracti64x4_epi64(aabb, 1);
-            let c = _mm512_extracti64x4_epi64(ccdd, 0);
-            let d = _mm512_extracti64x4_epi64(ccdd, 1);
-
-            Self {
-                save0: w0,
-                save1: w1,
-                a,
-                b,
-                c,
-                d,
-            }
+        Self {
+            buf0: *ptr[0],
+            buf1: *ptr[1],
         }
     }
 
     #[inline(always)]
     fn write(&self, mut ptr: GenericArray<&mut Self::Block, U2>) {
-        *ptr[0] = self.save0;
-        *ptr[1] = self.save1;
+        *ptr[0] = self.buf0;
+        *ptr[1] = self.buf1;
     }
 
     #[inline(always)]
@@ -440,29 +431,80 @@ impl Salsa20 for BlockAvx512F2 {
         }
 
         unsafe {
+            use crate::simd::{Compose, ExtractU32x2, Inverse};
+
+            // has initial value for buffer 0 and takes output AB
+            let mut save_0_ab_out = self.buf0;
+            // has initial value for buffer 1 and takes output CD
+            let mut save_1_cd_out = self.buf1;
+
+            let mut b: __m256i;
+            let mut d: __m256i;
+
+            // force a more compact version for stability, sometimes LLVM generates a 4xvpermt2d version
+            // that isn't as good and takes away registers that could be used for keeping a temporary buffer
+            // in registers
+            //
+            // SAFETY: gated behind target_feature = "avx512f"
+            core::arch::asm!(
+                "vpermt2d {save_0_ab_out}, {perm_ab}, {save_1_cd_out}",
+                "vextracti64x4 {b}, {save_0_ab_out}, 1",
+                "vpermt2d {save_1_cd_out}, {perm_cd_flipped}, {save_0_alias}",
+                "vextracti64x4 {d}, {save_1_cd_out}, 1",
+                save_0_ab_out = inout(zmm_reg) save_0_ab_out,
+                save_0_alias = in(zmm_reg) self.buf0,
+                save_1_cd_out = inout(zmm_reg) save_1_cd_out,
+                perm_ab = in(zmm_reg) Pivot2Ab::INDEX_ZMM,
+                perm_cd_flipped = in(zmm_reg) Pivot2CdFlipped::INDEX_ZMM,
+                b = out(ymm_reg) b,
+                d = out(ymm_reg) d,
+                options(pure, nomem, nostack),
+            );
+
+            let mut a = _mm512_castsi512_si256(save_0_ab_out);
+            let mut c = _mm512_castsi512_si256(save_1_cd_out);
+
             for _ in 0..(ROUND_PAIRS * 2 - 1) {
-                quarter_ymmwords!(self.a, self.b, self.c, self.d);
+                quarter_ymmwords!(a, b, c, d);
 
                 // a stays in place
                 // b = left shuffle d by 1 element
-                let newb = _mm256_shuffle_epi32(self.d, 0b00111001);
+                let newb = _mm256_shuffle_epi32(d, 0b00111001);
                 // c = left shuffle c by 2 elements
-                self.c = _mm256_shuffle_epi32(self.c, 0b01001110);
+                c = _mm256_shuffle_epi32(c, 0b01001110);
                 // d = left shuffle b by 3 elements
-                self.d = _mm256_shuffle_epi32(self.b, 0b10010011);
-                self.b = newb;
+                d = _mm256_shuffle_epi32(b, 0b10010011);
+                b = newb;
             }
 
-            quarter_ymmwords!(self.a, self.b, self.c, self.d);
+            quarter_ymmwords!(a, b, c, d);
 
-            let a0a1b0b1 = _mm512_inserti64x4(_mm512_zextsi256_si512(self.b), self.a, 1);
-            let c0c1d0d1 = _mm512_inserti64x4(_mm512_zextsi256_si512(self.d), self.c, 1);
+            let a0a1b0b1 = _mm512_inserti64x4(_mm512_zextsi256_si512(a), b, 1);
+            let c0c1d0d1 = _mm512_inserti64x4(_mm512_zextsi256_si512(c), d, 1);
 
-            let w0_output = _mm512_permutex2var_epi32(a0a1b0b1, SHUFFLE_UNPIVOT2_0, c0c1d0d1);
-            let w1_output = _mm512_permutex2var_epi32(a0a1b0b1, SHUFFLE_UNPIVOT2_1, c0c1d0d1);
+            let buf0_output =
+                _mm512_permutex2var_epi32(
+                    a0a1b0b1,
+                    Compose::<
+                        _,
+                        ExtractU32x2<_, false>,
+                        Compose<_, RoundShuffleAbcd, Inverse<_, Pivot>>,
+                    >::INDEX_ZMM,
+                    c0c1d0d1,
+                );
+            let buf1_output =
+                _mm512_permutex2var_epi32(
+                    a0a1b0b1,
+                    Compose::<
+                        _,
+                        ExtractU32x2<_, true>,
+                        Compose<_, RoundShuffleAbcd, Inverse<_, Pivot>>,
+                    >::INDEX_ZMM,
+                    c0c1d0d1,
+                );
 
-            self.save0 = _mm512_add_epi32(self.save0, w0_output);
-            self.save1 = _mm512_add_epi32(self.save1, w1_output);
+            self.buf0 = _mm512_add_epi32(self.buf0, buf0_output);
+            self.buf1 = _mm512_add_epi32(self.buf1, buf1_output);
         }
     }
 }
@@ -471,10 +513,6 @@ impl Salsa20 for BlockAvx512F2 {
 /// A solution for 1 lane of 128-bit blocks using portable SIMD
 pub struct BlockPortableSimd {
     save: u32x16,
-    a: u32x4,
-    b: u32x4,
-    c: u32x4,
-    d: u32x4,
 }
 
 #[cfg(feature = "portable-simd")]
@@ -497,21 +535,7 @@ impl Salsa20 for BlockPortableSimd {
 
     #[inline(always)]
     fn read(ptr: GenericArray<&Self::Block, U1>) -> Self {
-        let w = *ptr[0];
-
-        let w_out = Pivot::swizzle(w);
-        let a = w_out.extract::<0, 4>();
-        let b = w_out.extract::<4, 4>();
-        let c = w_out.extract::<8, 4>();
-        let d = w_out.extract::<12, 4>();
-
-        Self {
-            save: w,
-            a,
-            b,
-            c,
-            d,
-        }
+        Self { save: *ptr[0] }
     }
 
     #[inline(always)]
@@ -521,32 +545,42 @@ impl Salsa20 for BlockPortableSimd {
 
     #[inline(always)]
     fn keystream<const ROUND_PAIRS: usize>(&mut self) {
+        use crate::simd::{Identity, Inverse};
+
         if ROUND_PAIRS == 0 {
             return;
         }
 
-        for _ in 0..(ROUND_PAIRS * 2 - 1) {
-            self.b ^= simd_rotate_left::<_, 7>(self.a + self.d);
-            self.c ^= simd_rotate_left::<_, 9>(self.b + self.a);
-            self.d ^= simd_rotate_left::<_, 13>(self.c + self.b);
-            self.a ^= simd_rotate_left::<_, 18>(self.d + self.c);
+        let pivoted = Pivot::swizzle(self.save);
 
-            let newb = self.d.rotate_elements_left::<1>();
-            self.c = self.c.rotate_elements_left::<2>();
-            self.d = self.b.rotate_elements_left::<3>();
-            self.b = newb;
+        let mut a = pivoted.extract::<0, 4>();
+        let mut b = pivoted.extract::<4, 4>();
+        let mut c = pivoted.extract::<8, 4>();
+        let mut d = pivoted.extract::<12, 4>();
+
+        for _ in 0..(ROUND_PAIRS * 2 - 1) {
+            b ^= simd_rotate_left::<_, 7>(a + d);
+            c ^= simd_rotate_left::<_, 9>(b + a);
+            d ^= simd_rotate_left::<_, 13>(c + b);
+            a ^= simd_rotate_left::<_, 18>(d + c);
+
+            let newb = d.rotate_elements_left::<1>();
+            c = c.rotate_elements_left::<2>();
+            d = b.rotate_elements_left::<3>();
+            b = newb;
         }
 
-        self.b ^= simd_rotate_left::<_, 7>(self.a + self.d);
-        self.c ^= simd_rotate_left::<_, 9>(self.b + self.a);
-        self.d ^= simd_rotate_left::<_, 13>(self.c + self.b);
-        self.a ^= simd_rotate_left::<_, 18>(self.d + self.c);
+        b ^= simd_rotate_left::<_, 7>(a + d);
+        c ^= simd_rotate_left::<_, 9>(b + a);
+        d ^= simd_rotate_left::<_, 13>(c + b);
+        a ^= simd_rotate_left::<_, 18>(d + c);
 
-        let ab = core::simd::simd_swizzle!(self.a, self.b, [0, 1, 2, 3, 4, 5, 6, 7]);
-        let cd = core::simd::simd_swizzle!(self.c, self.d, [0, 1, 2, 3, 4, 5, 6, 7]);
-        let abcd = core::simd::simd_swizzle!(ab, cd, Unpivot::INDEX);
+        // straighten vectors
+        let ab = Identity::<8>::concat_swizzle(a, b);
+        let cd = Identity::<8>::concat_swizzle(c, d);
+        let abcd = Identity::<16>::concat_swizzle(ab, cd);
 
-        self.save = self.save + abcd;
+        self.save += Compose::<_, RoundShuffleAbcd, Inverse<_, Pivot>>::swizzle(abcd);
     }
 }
 
@@ -555,10 +589,6 @@ impl Salsa20 for BlockPortableSimd {
 pub struct BlockPortableSimd2 {
     save0: u32x16,
     save1: u32x16,
-    a: u32x8,
-    b: u32x8,
-    c: u32x8,
-    d: u32x8,
 }
 
 #[cfg(feature = "portable-simd")]
@@ -568,24 +598,9 @@ impl Salsa20 for BlockPortableSimd2 {
 
     #[inline(always)]
     fn read(ptr: GenericArray<&Self::Block, U2>) -> Self {
-        let w0 = *ptr[0];
-        let w1 = *ptr[1];
-
-        let aabb = Pivot2Ab::concat_swizzle(w0, w1);
-        let ccdd = Pivot2Cd::concat_swizzle(w0, w1);
-
-        let a = aabb.extract::<0, 8>();
-        let b = aabb.extract::<8, 8>();
-        let c = ccdd.extract::<0, 8>();
-        let d = ccdd.extract::<8, 8>();
-
         Self {
-            save0: w0,
-            save1: w1,
-            a,
-            b,
-            c,
-            d,
+            save0: *ptr[0],
+            save1: *ptr[1],
         }
     }
 
@@ -597,35 +612,51 @@ impl Salsa20 for BlockPortableSimd2 {
 
     #[inline(always)]
     fn keystream<const ROUND_PAIRS: usize>(&mut self) {
+        use crate::simd::Inverse;
+
         if ROUND_PAIRS == 0 {
             return;
         }
 
-        for _ in 0..(ROUND_PAIRS * 2 - 1) {
-            self.b ^= simd_rotate_left::<_, 7>(self.a + self.d);
-            self.c ^= simd_rotate_left::<_, 9>(self.b + self.a);
-            self.d ^= simd_rotate_left::<_, 13>(self.c + self.b);
-            self.a ^= simd_rotate_left::<_, 18>(self.d + self.c);
+        let aabb = Pivot2Ab::concat_swizzle(self.save0, self.save1);
+        let ccdd = Pivot2CdFlipped::concat_swizzle(self.save1, self.save0);
 
-            let newb = core::simd::simd_swizzle!(self.d, [1, 2, 3, 0, 5, 6, 7, 4]);
-            self.c = core::simd::simd_swizzle!(self.c, [2, 3, 0, 1, 6, 7, 4, 5]);
-            self.d = core::simd::simd_swizzle!(self.b, [3, 0, 1, 2, 7, 4, 5, 6]);
-            self.b = newb;
+        let mut a = aabb.extract::<0, 8>();
+        let mut b = aabb.extract::<8, 8>();
+        let mut c = ccdd.extract::<0, 8>();
+        let mut d = ccdd.extract::<8, 8>();
+
+        for _ in 0..(ROUND_PAIRS * 2 - 1) {
+            b ^= simd_rotate_left::<_, 7>(a + d);
+            c ^= simd_rotate_left::<_, 9>(b + a);
+            d ^= simd_rotate_left::<_, 13>(c + b);
+            a ^= simd_rotate_left::<_, 18>(d + c);
+
+            let newb = core::simd::simd_swizzle!(d, [1, 2, 3, 0, 5, 6, 7, 4]);
+            c = core::simd::simd_swizzle!(c, [2, 3, 0, 1, 6, 7, 4, 5]);
+            d = core::simd::simd_swizzle!(b, [3, 0, 1, 2, 7, 4, 5, 6]);
+            b = newb;
         }
 
-        self.b ^= simd_rotate_left::<_, 7>(self.a + self.d);
-        self.c ^= simd_rotate_left::<_, 9>(self.b + self.a);
-        self.d ^= simd_rotate_left::<_, 13>(self.c + self.b);
-        self.a ^= simd_rotate_left::<_, 18>(self.d + self.c);
+        b ^= simd_rotate_left::<_, 7>(a + d);
+        c ^= simd_rotate_left::<_, 9>(b + a);
+        d ^= simd_rotate_left::<_, 13>(c + b);
+        a ^= simd_rotate_left::<_, 18>(d + c);
 
+        // pick out elements from each buffer
+        //
         // this shuffle automatically gets combined on 512-bit platforms
-        let a0b0 = core::simd::simd_swizzle!(self.a, self.b, [0, 1, 2, 3, 8, 9, 10, 11]);
-        let a1b1 = core::simd::simd_swizzle!(self.a, self.b, [4, 5, 6, 7, 12, 13, 14, 15]);
-        let c0d0 = core::simd::simd_swizzle!(self.c, self.d, [0, 1, 2, 3, 8, 9, 10, 11]);
-        let c1d1 = core::simd::simd_swizzle!(self.c, self.d, [4, 5, 6, 7, 12, 13, 14, 15]);
+        // we will try to keep them in 128-bit lanes as much as possible
+        // so that it does not explode on platforms with only narrow SIMD
+        // the vast majority of 512-bit platforms is AVX512F which uses the dedicated
+        // this shuffle automatically gets combined on 512-bit platforms
+        let a0b0 = core::simd::simd_swizzle!(a, b, [0, 1, 2, 3, 8, 9, 10, 11]);
+        let a1b1 = core::simd::simd_swizzle!(a, b, [4, 5, 6, 7, 12, 13, 14, 15]);
+        let c0d0 = core::simd::simd_swizzle!(c, d, [0, 1, 2, 3, 8, 9, 10, 11]);
+        let c1d1 = core::simd::simd_swizzle!(c, d, [4, 5, 6, 7, 12, 13, 14, 15]);
 
-        let abcd = core::simd::simd_swizzle!(a0b0, c0d0, Unpivot::INDEX);
-        let abcd1 = core::simd::simd_swizzle!(a1b1, c1d1, Unpivot::INDEX);
+        let abcd = Compose::<_, RoundShuffleAbcd, Inverse<_, Pivot>>::concat_swizzle(a0b0, c0d0);
+        let abcd1 = Compose::<_, RoundShuffleAbcd, Inverse<_, Pivot>>::concat_swizzle(a1b1, c1d1);
 
         self.save0 = self.save0 + abcd;
         self.save1 = self.save1 + abcd1;
@@ -748,6 +779,12 @@ mod tests {
 
     #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
     #[test]
+    fn test_keystream_0() {
+        test_keystream::<1>();
+    }
+
+    #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+    #[test]
     fn test_keystream_2() {
         test_keystream::<1>();
     }
@@ -780,6 +817,12 @@ mod tests {
     #[test]
     fn test_keystream_mb2_10() {
         test_keystream_mb2::<5>();
+    }
+
+    #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+    #[test]
+    fn test_keystream_mb2_0() {
+        test_keystream_mb2::<0>();
     }
 
     #[cfg(feature = "portable-simd")]
