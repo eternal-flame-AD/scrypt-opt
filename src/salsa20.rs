@@ -493,8 +493,11 @@ impl Salsa20 for BlockAvx512F2 {
     fn keystream<const ROUND_PAIRS: usize>(&mut self) {
         unsafe {
             if ROUND_PAIRS == 0 {
-                // some glue code to make sure the behavior is correct
-                // not actually used in the algorithm
+                // This block is executed when ROUND_PAIRS is zero, which is a special case
+                // not part of the main keystream generation algorithm. It ensures that the
+                // state variables (self.b, self.c, self.d) are shuffled in a specific way
+                // to maintain consistency or prepare for subsequent operations. This is
+                // necessary for correctness but does not contribute to the core algorithm.
                 let newd = _mm256_shuffle_epi32(self.b, 0b10_01_00_11);
                 self.c = _mm256_shuffle_epi32(self.c, 0b01_00_11_10);
                 self.b = _mm256_shuffle_epi32(self.d, 0b00_11_10_01);
