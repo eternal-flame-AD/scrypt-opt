@@ -30,7 +30,7 @@ use std::{
     num::{NonZeroU8, NonZeroU64},
     sync::{
         Arc, Condvar, Mutex,
-        atomic::{AtomicU64, AtomicUsize},
+        atomic::{AtomicBool, AtomicU64, AtomicUsize},
     },
 };
 
@@ -227,16 +227,10 @@ fn pow<R: ArrayLength + NonZero>(
         Pbkdf2HmacSha256State::MAX_SHORT_PASSWORD_LEN
     );
 
-    const SOLUTION_PENDING_SENTINEL: u64 = u64::MAX;
+    const NOT_A_SOLUTION: u64 = u64::MAX;
 
     let required_blocks =
         scrypt_opt::BufferSet::<&mut [Align64<scrypt_opt::Block<R>>], R>::minimum_blocks(cf);
-
-    enum FinalizationState {
-        Running,
-        Solved(std::time::Duration),
-        Failed,
-    }
 
     let search_max = if nonce_len == 8 {
         u64::MAX - 1
@@ -265,11 +259,11 @@ fn pow<R: ArrayLength + NonZero>(
         mask: NonZeroU64,
         target: u64,
         offset: isize,
-        min_nonce: AtomicU64,
+        stop_signal: AtomicBool,
         retired_count: AtomicU64,
         failed_threads: AtomicUsize,
         solved_condvar: Condvar,
-        solved_mutex: Mutex<(FinalizationState, Box<[u8]>)>,
+        solved_mutex: Mutex<(Box<[u8]>, u64)>,
     }
 
     let mut state = Arc::new(State::<R> {
@@ -278,15 +272,19 @@ fn pow<R: ArrayLength + NonZero>(
         mask,
         target,
         offset: output_len as isize - 8,
-        min_nonce: AtomicU64::new(SOLUTION_PENDING_SENTINEL),
+        stop_signal: AtomicBool::new(false),
         retired_count: AtomicU64::new(0),
         failed_threads: AtomicUsize::new(num_threads),
         solved_condvar: Condvar::new(),
-        solved_mutex: Mutex::new((FinalizationState::Running, output)),
+        solved_mutex: Mutex::new((output, NOT_A_SOLUTION)),
     });
 
     #[cfg(feature = "core_affinity")]
     let mut core_assigner = CoreAffinityAssigner::new(core_stride);
+
+    // lock the mutex right now to avoid a race condition where some thread
+    // found the solution before we get to wait on the condvar
+    let mut lock = state.solved_mutex.lock().unwrap();
 
     let start_time = std::time::Instant::now();
     for thread_idx in 0..num_threads {
@@ -364,7 +362,7 @@ fn pow<R: ArrayLength + NonZero>(
                     (&'a Arc<State<R>>, &'b mut [u8]),
                     &mut [Align64<scrypt_opt::Block<R>>],
                     R,
-                    bool,
+                    u64,
                 > for NonceState<R>
             {
                 #[inline(always)]
@@ -372,10 +370,8 @@ fn pow<R: ArrayLength + NonZero>(
                     &mut self,
                     (pipeline_state, _local_output): &mut (&'a Arc<State<R>>, &'b mut [u8]),
                     buffer_set: &mut BufferSet<&mut [Align64<scrypt_opt::Block<R>>], R>,
-                ) -> Option<bool> {
+                ) {
                     buffer_set.set_input(&self.hmac_state, &pipeline_state.salt);
-
-                    None
                 }
 
                 #[inline(always)]
@@ -383,14 +379,13 @@ fn pow<R: ArrayLength + NonZero>(
                     self,
                     (pipeline_state, local_output): &mut (&'a Arc<State<R>>, &'b mut [u8]),
                     buffer_set: &mut scrypt_opt::BufferSet<&mut [Align64<scrypt_opt::Block<R>>], R>,
-                ) -> Option<bool> {
+                ) -> Option<u64> {
                     buffer_set.extract_output(&self.hmac_state, local_output);
 
                     pipeline_state
                         .retired_count
                         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
-                    let mut new_solution = SOLUTION_PENDING_SENTINEL;
                     // SAFETY: purposefully reading out of bounds, allocated 8 bytes extra for target
                     //
                     // pointer is manually aligned to 8 bytes at the start of the function
@@ -411,29 +406,7 @@ fn pow<R: ArrayLength + NonZero>(
 
                     let succeeded = t <= pipeline_state.target;
                     if succeeded {
-                        new_solution = self.nonce;
-                    }
-
-                    let xchg = pipeline_state.min_nonce.compare_exchange_weak(
-                        SOLUTION_PENDING_SENTINEL,
-                        new_solution,
-                        std::sync::atomic::Ordering::Release,
-                        std::sync::atomic::Ordering::Relaxed,
-                    );
-
-                    // a solution was already found, do nothing and exit quietly
-                    if xchg.is_err()
-                        && pipeline_state
-                            .min_nonce
-                            .load(std::sync::atomic::Ordering::Relaxed)
-                            != SOLUTION_PENDING_SENTINEL
-                    {
-                        return Some(false);
-                    }
-
-                    // we are the leader if we found a solution and we are the first to do so
-                    if succeeded {
-                        return Some(xchg.is_ok());
+                        return Some(self.nonce);
                     }
 
                     None
@@ -444,70 +417,81 @@ fn pow<R: ArrayLength + NonZero>(
                 &mut buffers1,
                 ((thread_idx as u64)..=search_max)
                     .step_by(num_threads)
-                    .map(|i| NonceState::<R> {
-                        nonce: i,
-                        // SAFETY: i.to_le_bytes() is way less than 1 SHA-256 block, so we can safely unwrap without checking
-                        hmac_state: unsafe {
-                            // we do not need to [..nonce_len] because HMAC(short_key) = HMAC(short_key || 0)
-                            Pbkdf2HmacSha256State::new_short(&i.to_le_bytes()).unwrap_unchecked()
-                        },
-                        _marker: PhantomData,
+                    .map_while(|i| {
+                        if state.stop_signal.load(std::sync::atomic::Ordering::Relaxed) {
+                            return None;
+                        }
+
+                        Some(NonceState::<R> {
+                            nonce: i,
+                            // SAFETY: i.to_le_bytes() is way less than 1 SHA-256 block, so we can safely unwrap without checking
+                            hmac_state: unsafe {
+                                // we do not need to [..nonce_len] because HMAC(short_key) = HMAC(short_key || 0)
+                                Pbkdf2HmacSha256State::new_short(&i.to_le_bytes())
+                                    .unwrap_unchecked()
+                            },
+                            _marker: PhantomData,
+                        })
                     }),
                 &mut (&state, local_output),
             );
 
-            if let Some(is_leader) = result {
-                if is_leader {
-                    let end_time = std::time::Instant::now();
-                    let mut solution = state.solved_mutex.lock().unwrap();
-                    if !matches!(solution.0, FinalizationState::Running) {
-                        return;
-                    }
+            if let Some(nonce) = result {
+                // if the solution is real we definitely can stop the search
+                // so signal ASAP
+                state
+                    .stop_signal
+                    .store(true, std::sync::atomic::Ordering::Release);
 
-                    solution.1.copy_from_slice(&local_output);
-
-                    solution.0 = FinalizationState::Solved(end_time - start_time);
+                // synchronize and pick our answer if no one else has gotten to this point yet
+                let mut solution = state.solved_mutex.lock().unwrap();
+                if solution.1 == NOT_A_SOLUTION {
+                    solution.0.copy_from_slice(&local_output);
+                    solution.1 = nonce;
                     state.solved_condvar.notify_all();
                 }
             } else {
-                // if all threads failed, notify the main thread
+                // if all threads failed, notify the main thread as well
                 if 1 == state
                     .failed_threads
                     .fetch_sub(1, std::sync::atomic::Ordering::Relaxed)
                 {
-                    let mut solution = state.solved_mutex.lock().unwrap();
-                    solution.0 = FinalizationState::Failed;
+                    state
+                        .stop_signal
+                        .store(true, std::sync::atomic::Ordering::Release);
+
                     state.solved_condvar.notify_all();
                 }
             }
         });
     }
 
-    let elapsed = {
-        let mut solved = state.solved_mutex.lock().unwrap();
-        while let FinalizationState::Running = solved.0 {
-            solved = state.solved_condvar.wait(solved).unwrap();
+    loop {
+        // move the lock into the scope of the loop
+        let new_lock = state.solved_condvar.wait(lock).unwrap();
+        if state.stop_signal.load(std::sync::atomic::Ordering::Acquire) {
+            // all threads failed, return None, we don't have do further synchronization
+            if new_lock.1 == NOT_A_SOLUTION {
+                return None;
+            }
+            break;
         }
+        // spurious wakeup, move the lock back in
+        lock = new_lock;
+    }
+    let elapsed = start_time.elapsed();
 
-        if let FinalizationState::Solved(elapsed) = solved.0 {
-            elapsed
-        } else {
-            return None;
-        }
-    };
-
-    let nonce_read = state.min_nonce.load(std::sync::atomic::Ordering::Acquire);
-
-    // spin loop until all threads have exited
+    // spin loop until all threads have drained their local pipeline and exited
     loop {
         match Arc::try_unwrap(state) {
             Ok(state) => {
+                let inner = Mutex::into_inner(state.solved_mutex).unwrap();
                 let retired_count = state
                     .retired_count
                     .load(std::sync::atomic::Ordering::Relaxed);
                 return Some(PowResult {
-                    nonce: nonce_read,
-                    output: state.solved_mutex.into_inner().unwrap().1,
+                    nonce: inner.1,
+                    output: inner.0,
                     actual_iterations: retired_count,
                     elapsed,
                 });
@@ -649,9 +633,8 @@ fn throughput<Pipeline: Bit, R: ArrayLength + NonZero>(
                     &mut self,
                     _state: &mut Arc<AtomicU64>,
                     buffer_set: &mut scrypt_opt::BufferSet<&mut [Align64<scrypt_opt::Block<R>>], R>,
-                ) -> Option<()> {
+                ) {
                     buffer_set.set_input(&self.hmac_state, KAT_SALT);
-                    None
                 }
 
                 #[inline(always)]
@@ -818,12 +801,6 @@ fn main() {
                 target_u64 & (!target_mask)
             );
 
-            assert!(
-                target_mask != 0,
-                "target mask must be non-zero (currently is {:x})",
-                target_mask
-            );
-
             let target_mask = NonZeroU64::new(target_mask).expect("target mask must be non-zero");
 
             let config = GeneralPurposeConfig::new()
@@ -842,7 +819,7 @@ fn main() {
                     num_threads, estimated_cs
                 );
             }
-            eprintln!("Nonce\tResult\tN\tR\tEstimatedCands\tRealCands\tLuck%\tRealCPS");
+            eprintln!("Nonce\tResult\tN\tR\tEstimatedCands\tRealCands\tLuck%\tCPS");
             let Some(output) = match_r!(r, R, {
                 pow::<R>(
                     salt_decoded.into_boxed_slice(),

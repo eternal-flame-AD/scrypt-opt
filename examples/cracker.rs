@@ -47,9 +47,8 @@ impl<
     OutputLen: ArrayLength + NonZero,
 > PipelineContext<u64, Q, R, &'a [u8]> for CrackContext<'a, '_, R, OutputLen>
 {
-    fn begin(&mut self, _state: &mut u64, buffer_set: &mut BufferSet<Q, R>) -> Option<&'a [u8]> {
+    fn begin(&mut self, _state: &mut u64, buffer_set: &mut BufferSet<Q, R>) {
         buffer_set.set_input(&self.hmac_state, self.salt);
-        None
     }
 
     fn drain(self, state: &mut u64, buffer_set: &mut BufferSet<Q, R>) -> Option<&'a [u8]> {

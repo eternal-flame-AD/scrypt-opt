@@ -78,9 +78,8 @@ fn bench_scrypt(c: &mut Criterion) {
                     &mut self,
                     _state: &mut (),
                     buffer_set: &mut scrypt_opt::BufferSet<&mut [Align64<scrypt_opt::Block<R>>], R>,
-                ) -> Option<()> {
+                ) {
                     buffer_set.set_input(&self.hmac_state, b"salt");
-                    None
                 }
 
                 #[inline(always)]

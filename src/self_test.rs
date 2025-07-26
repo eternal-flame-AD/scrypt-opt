@@ -259,7 +259,7 @@ pub trait CaseP1 {
                 &mut self,
                 _state: &mut usize,
                 buffer_set: &mut BufferSet<&mut [Align64<Block<R>>], R>,
-            ) -> Option<()> {
+            ) {
                 match self.i % 3 {
                     0 | 1 => {
                         buffer_set.set_input(&self.hmac_state, self.salt);
@@ -269,8 +269,6 @@ pub trait CaseP1 {
                     }
                     _ => unreachable!(),
                 }
-
-                None
             }
             fn drain(
                 self,
