@@ -376,8 +376,14 @@ impl Salsa20 for BlockAvx512F {
     fn keystream<const ROUND_PAIRS: usize>(&mut self) {
         unsafe {
             if ROUND_PAIRS == 0 {
-                // some glue code to make sure the behavior is correct
-                // not actually used in the algorithm
+                // Special handling for the 0-round case:
+                // The shuffling operations below are used to ensure that the
+                // state variables (a, b, c, d) are permuted in a way that
+                // maintains consistency with the expected output format.
+                // This is necessary because the 0-round case does not perform
+                // any quarter-round transformations, so we apply these
+                // shuffles to simulate the effect of a no-op transformation
+                // and ensure compatibility with downstream processing.
                 let newb = _mm_shuffle_epi32(self.d, 0b00_11_10_01);
                 self.c = _mm_shuffle_epi32(self.c, 0b01_00_11_10);
                 self.b = _mm_shuffle_epi32(self.b, 0b10_01_00_11);
