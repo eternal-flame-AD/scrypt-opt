@@ -34,11 +34,12 @@ jobs:
       - name: Build artifacts for musl target
         run: |
             mkdir -p tmp/artifacts
+            TARGET=x86_64-unknown-linux-musl
             for mcpu in $TARGET_MCPUS; do
-                RUSTFLAGS="-Ctarget-cpu=$mcpu" cargo build --profile release --lib --features "$FEATURE_SET_LIB" --target-dir target/$mcpu
-                cp target/$mcpu/release/libscrypt_opt.a tmp/artifacts/libscrypt_opt-$mcpu.a
-                RUSTFLAGS="-Ctarget-cpu=$mcpu" cargo build --profile release --bin scrypt-opt --features "$FEATURE_SET_BIN" --target-dir target/$mcpu
-                cp target/$mcpu/release/scrypt-opt tmp/artifacts/scrypt-opt-$mcpu
+                RUSTFLAGS="-Ctarget-cpu=$mcpu" cargo build --profile release --lib --features "$FEATURE_SET_LIB" --target-dir target/$mcpu --target $TARGET 
+                cp target/$mcpu/$TARGET/release/libscrypt_opt.a tmp/artifacts/libscrypt_opt-$mcpu.a
+                RUSTFLAGS="-Ctarget-cpu=$mcpu" cargo build --profile release --bin scrypt-opt --features "$FEATURE_SET_BIN" --target-dir target/$mcpu --target $TARGET
+                cp target/$mcpu/$TARGET/release/scrypt-opt tmp/artifacts/scrypt-opt-$mcpu
             done
             
       - name: Install nightly toolchain and GNU target
@@ -50,10 +51,10 @@ jobs:
       - name: Build artifacts for gnu target
         run: |
             mkdir -p tmp/artifacts
+            TARGET=x86_64-unknown-linux-gnu
             for mcpu in $TARGET_MCPUS; do
-                RUSTFLAGS="-Ctarget-cpu=$mcpu" cargo test --features "$FEATURE_SET_BIN"
-                RUSTFLAGS="-Ctarget-cpu=$mcpu" cargo build --lib --profile release --features "$FEATURE_SET_LIB" --target-dir target/$mcpu
-                cp target/$mcpu/release/libscrypt_opt.so tmp/artifacts/libscrypt_opt-$mcpu.so
+                RUSTFLAGS="-Ctarget-cpu=$mcpu" cargo build --lib --profile release --features "$FEATURE_SET_LIB" --target-dir target/$mcpu --target $TARGET
+                cp target/$mcpu/$TARGET/release/libscrypt_opt.so tmp/artifacts/libscrypt_opt-$mcpu.so
             done
       
       - name: Install nightly toolchain and windows target
@@ -61,15 +62,16 @@ jobs:
         with:
           components: rust-src
           targets: x86_64-pc-windows-gnu
-      
+
       - name: Build artifacts for windows target
         run: |
             mkdir -p tmp/artifacts
+            TARGET=x86_64-pc-windows-gnu
             for mcpu in $TARGET_MCPUS; do
-                RUSTFLAGS="-Ctarget-cpu=$mcpu" cargo build --lib --profile release --features "$FEATURE_SET_LIB" --target-dir target/$mcpu
-                cp target/$mcpu/release/scrypt_opt.dll tmp/artifacts/scrypt_opt-$mcpu.dll
-                RUSTFLAGS="-Ctarget-cpu=$mcpu" cargo build --bin scrypt-opt --profile release --features "$FEATURE_SET_BIN" --target-dir target/$mcpu
-                cp target/$mcpu/release/scrypt-opt.exe tmp/artifacts/scrypt-opt-$mcpu.exe
+                RUSTFLAGS="-Ctarget-cpu=$mcpu" cargo build --lib --profile release --features "$FEATURE_SET_LIB" --target-dir target/$mcpu --target $TARGET
+                cp target/$mcpu/$TARGET/release/scrypt_opt.dll tmp/artifacts/scrypt_opt-$mcpu.dll
+                RUSTFLAGS="-Ctarget-cpu=$mcpu" cargo build --bin scrypt-opt --profile release --features "$FEATURE_SET_BIN" --target-dir target/$mcpu --target $TARGET
+                cp target/$mcpu/$TARGET/release/scrypt-opt.exe tmp/artifacts/scrypt-opt-$mcpu.exe
             done
       
       - name: Upload Artifacts
