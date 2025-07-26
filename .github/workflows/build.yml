@@ -78,5 +78,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: scrypt-opt
-          path: tmp/artifacts/
+          path: tmp/artifacts/*
 
