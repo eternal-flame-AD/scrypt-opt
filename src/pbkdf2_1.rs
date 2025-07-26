@@ -101,7 +101,6 @@ impl Pbkdf2HmacSha256State {
     /// The maximum length of the password that can be used to create an HMAC state using the `Self::new_short` method
     pub const MAX_SHORT_PASSWORD_LEN: usize = 64 - 9;
 
-    #[inline(always)]
     /// Create a new PBKDF2-HMAC-SHA256 state from a password
     pub fn new(password: &[u8]) -> Self {
         let mut key_pad = crypto_common::Block::<sha2::Sha256>::default();
@@ -239,6 +238,12 @@ impl Pbkdf2HmacSha256State {
         let mut tmp_block_outer = GenericArray::<u32, U16>::default();
         tmp_block_outer[8] = u32::from_ne_bytes([0x80, 0, 0, 0]);
         tmp_block_outer[15] = u32::from_ne_bytes([0, 0, 3, 0]);
+
+        #[cfg(all(
+            target_arch = "x86_64",
+            target_feature = "avx2",
+            not(target_feature = "sha")
+        ))]
         let mut tmp_block_outer = [tmp_block_outer; 4];
 
         let mut idx = 0u32;
@@ -252,6 +257,42 @@ impl Pbkdf2HmacSha256State {
                 )
             };
 
+            #[cfg(not(all(
+                target_arch = "x86_64",
+                target_feature = "avx2",
+                not(target_feature = "sha")
+            )))]
+            // unroll only if a 4-way implementation is selected, this path we can focus on code size
+            for i in (0..output_words.len()).step_by(8) {
+                idx += 1;
+                let inner_hash =
+                    inner_digest.remainder_finalize(GenericArray::from_array(idx.to_be_bytes()));
+
+                repeat8!(k, {
+                    tmp_block_outer[k] = u32::from_ne_bytes(inner_hash[k].to_be_bytes());
+                });
+
+                let mut outer_hash = self.outer_digest_words;
+
+                sha2::compress256(
+                    &mut outer_hash,
+                    &[unsafe {
+                        core::mem::transmute::<_, crypto_common::Block<sha2::Sha256>>(
+                            tmp_block_outer,
+                        )
+                    }],
+                );
+
+                repeat8!(k, {
+                    output_words[i + k] = u32::from_ne_bytes(outer_hash[k].to_be_bytes());
+                });
+            }
+
+            #[cfg(all(
+                target_arch = "x86_64",
+                target_feature = "avx2",
+                not(target_feature = "sha")
+            ))]
             for i in (0..output_words.len()).step_by(8 * 4) {
                 let mut inner_hash_soa = Align64([[0u32; 4]; 8]);
 
@@ -266,81 +307,46 @@ impl Pbkdf2HmacSha256State {
                     });
                 });
 
-                #[cfg(all(
-                    target_arch = "x86_64",
-                    target_feature = "avx2",
-                    not(target_feature = "sha")
-                ))]
-                {
-                    use crate::sha2_mb::multiway_arx_mb4;
-                    use core::arch::x86_64::*;
-                    let mut state = core::array::from_fn(|i| unsafe {
-                        _mm_set1_epi32(self.outer_digest_words[i] as _)
-                    });
-                    let block = unsafe {
-                        [
-                            _mm256_load_si256(inner_hash_soa[0].as_ptr().cast()),
-                            _mm256_load_si256(inner_hash_soa[2].as_ptr().cast()),
-                            _mm256_load_si256(inner_hash_soa[4].as_ptr().cast()),
-                            _mm256_load_si256(inner_hash_soa[6].as_ptr().cast()),
-                            _mm256_zextsi128_si256(_mm_set1_epi32(u32::from_be_bytes([
-                                0x80, 0, 0, 0,
-                            ])
-                                as _)),
-                            _mm256_setzero_si256(),
-                            _mm256_setzero_si256(),
-                            _mm256_setr_m128i(
-                                _mm_setzero_si128(),
-                                _mm_set1_epi32(u32::from_be_bytes([0, 0, 3, 0]) as _),
-                            ),
-                        ]
+                use crate::sha2_mb::multiway_arx_mb4;
+                use core::arch::x86_64::*;
+                let mut state = core::array::from_fn(|i| unsafe {
+                    _mm_set1_epi32(self.outer_digest_words[i] as _)
+                });
+                let block = unsafe {
+                    [
+                        _mm256_load_si256(inner_hash_soa[0].as_ptr().cast()),
+                        _mm256_load_si256(inner_hash_soa[2].as_ptr().cast()),
+                        _mm256_load_si256(inner_hash_soa[4].as_ptr().cast()),
+                        _mm256_load_si256(inner_hash_soa[6].as_ptr().cast()),
+                        _mm256_zextsi128_si256(_mm_set1_epi32(
+                            u32::from_be_bytes([0x80, 0, 0, 0]) as _
+                        )),
+                        _mm256_setzero_si256(),
+                        _mm256_setzero_si256(),
+                        _mm256_setr_m128i(
+                            _mm_setzero_si128(),
+                            _mm_set1_epi32(u32::from_be_bytes([0, 0, 3, 0]) as _),
+                        ),
+                    ]
+                };
+
+                multiway_arx_mb4(&mut state, block);
+
+                repeat8!(i, {
+                    state[i] = unsafe {
+                        _mm_add_epi32(_mm_set1_epi32(self.outer_digest_words[i] as _), state[i])
                     };
+                });
 
-                    multiway_arx_mb4(&mut state, block);
-
-                    repeat8!(i, {
-                        state[i] = unsafe {
-                            _mm_add_epi32(_mm_set1_epi32(self.outer_digest_words[i] as _), state[i])
-                        };
-                    });
-
-                    repeat8!(k, {
-                        let mut tmp = Align64([0u32; 4]);
-                        unsafe {
-                            _mm_storeu_si128(tmp.as_mut_ptr().cast(), state[k]);
-                        }
-                        repeat4!(j, {
-                            output_words[i + j * 8 + k] = u32::from_ne_bytes(tmp[j].to_be_bytes());
-                        });
-                    });
-                }
-
-                #[cfg(any(
-                    not(target_arch = "x86_64"),
-                    not(target_feature = "avx2"),
-                    target_feature = "sha"
-                ))]
-                {
-                    let mut outer_hash = [self.outer_digest_words; 4];
-
+                repeat8!(k, {
+                    let mut tmp = Align64([0u32; 4]);
+                    unsafe {
+                        _mm_storeu_si128(tmp.as_mut_ptr().cast(), state[k]);
+                    }
                     repeat4!(j, {
-                        sha2::compress256(
-                            &mut outer_hash[j],
-                            &[unsafe {
-                                core::mem::transmute::<_, crypto_common::Block<sha2::Sha256>>(
-                                    tmp_block_outer[j],
-                                )
-                            }],
-                        );
+                        output_words[i + j * 8 + k] = u32::from_ne_bytes(tmp[j].to_be_bytes());
                     });
-
-                    repeat4!(j, {
-                        repeat8!(k, {
-                            output_words[i + j * 8 + k] =
-                                u32::from_ne_bytes(outer_hash[j][k].to_be_bytes());
-                        });
-                    });
-                }
+                });
             }
         }
     }
