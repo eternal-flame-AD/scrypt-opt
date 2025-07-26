@@ -239,13 +239,6 @@ impl Pbkdf2HmacSha256State {
         tmp_block_outer[8] = u32::from_ne_bytes([0x80, 0, 0, 0]);
         tmp_block_outer[15] = u32::from_ne_bytes([0, 0, 3, 0]);
 
-        #[cfg(all(
-            target_arch = "x86_64",
-            target_feature = "avx2",
-            not(target_feature = "sha")
-        ))]
-        let mut tmp_block_outer = [tmp_block_outer; 4];
-
         let mut idx = 0u32;
         for mut output in output {
             let output_item = output.as_mut();
@@ -303,7 +296,6 @@ impl Pbkdf2HmacSha256State {
 
                     repeat8!(k, {
                         inner_hash_soa[k][j] = inner_hash[k];
-                        tmp_block_outer[j][k] = u32::from_ne_bytes(inner_hash[k].to_be_bytes());
                     });
                 });
 

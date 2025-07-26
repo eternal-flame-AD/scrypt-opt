@@ -174,7 +174,7 @@ pub unsafe extern "C" fn scrypt_c(
 ///     if (alloc == NULL) {
 ///         return 2;
 ///     }
-///     scrypt_ro_mix_interleaved(alloc, alloc, r, cf, minimum_buffer_len);
+///     scrypt_ro_mix(alloc, alloc, r, cf, minimum_buffer_len);
 ///     return 0;
 /// }
 /// ```
