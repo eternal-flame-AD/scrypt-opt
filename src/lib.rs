@@ -22,14 +22,8 @@ macro_rules! repeat4 {
 #[rustfmt::skip]
 macro_rules! repeat8 {
     ($i:ident, $b:block) => {{
-        { let $i = 0; $b }
-        { let $i = 1; $b }
-        { let $i = 2; $b }
-        { let $i = 3; $b }
-        { let $i = 4; $b }
-        { let $i = 5; $b }
-        { let $i = 6; $b }
-        { let $i = 7; $b }
+        repeat4!(di, { let $i = di; $b });
+        repeat4!(di, { let $i = di + 4; $b });
     }};
 }
 
@@ -132,6 +126,9 @@ pub trait ValidCostFactor: Unsigned + NonZero + sealing::Sealed {
 
 const MAX_CF: u8 = 31;
 const MAX_N: u32 = 1 << MAX_CF;
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+const MAX_R_FOR_FULL_INTERLEAVED_ZMM: usize = 6; // 6 * 2 * 2 = 24 registers
+const MAX_R_FOR_UNROLLING: usize = 8;
 
 macro_rules! impl_valid_cost_factor {
     ($($base:ty),*) => {
@@ -369,7 +366,7 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
     pub fn scrypt_ro_mix(&mut self) {
         // If possible, redirect to the register resident implementation to avoid data access thrashing.
         #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
-        if R::USIZE <= 8 {
+        if R::USIZE <= MAX_R_FOR_UNROLLING {
             self.scrypt_ro_mix_ex_zmm::<salsa20::BlockAvx512F>();
             return;
         }
@@ -503,7 +500,7 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
     pub fn scrypt_ro_mix_interleaved(&mut self, other: &mut Self) {
         // If possible, steer to the register-resident AVX-512 implementation to avoid cache line thrashing.
         #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
-        if R::USIZE <= 8 {
+        if R::USIZE <= MAX_R_FOR_UNROLLING {
             self.scrypt_ro_mix_interleaved_ex_zmm::<salsa20::BlockAvx512F2>(other);
             return;
         }
@@ -562,14 +559,17 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
     fn scrypt_ro_mix_ex_zmm<S: Salsa20<Lanes = U1, Block = core::arch::x86_64::__m512i>>(
         &mut self,
     ) {
-        assert!(R::USIZE <= 8, "scrypt_ro_mix_ex_zmm: R > 8");
+        assert!(
+            R::USIZE <= MAX_R_FOR_UNROLLING,
+            "scrypt_ro_mix_ex_zmm: R > {}",
+            MAX_R_FOR_UNROLLING
+        );
         let v = self.v.as_mut();
         let n = 1 << length_to_cf(v.len());
         // at least n+1 long, this is checked by length_to_cf
         debug_assert!(v.len() > n, "scrypt_ro_mix_ex_zmm: v.len() <= n");
 
         let mut input_b = InRegisterAdapter::<R>::new();
-        let mut input_t = InRegisterAdapter::<R>::new();
         for i in 0..(n - 1) {
             let [src, dst] = unsafe { v.get_disjoint_unchecked_mut([i, i + 1]) };
             scrypt_block_mix::<R, S, _, _>(&*src, dst);
@@ -579,6 +579,8 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
         let mut idx = input_b.extract_idx() as usize & (n - 1);
 
         for _ in (0..n).step_by(2) {
+            // for some reason this doesn't spill, so let's leave it as is
+            let mut input_t = InRegisterAdapter::<R>::new();
             scrypt_block_mix::<R, S, _, _>(
                 (&input_b, unsafe { v.get_unchecked(idx) }),
                 &mut input_t,
@@ -612,7 +614,11 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
         &mut self,
         other: &mut Self,
     ) {
-        assert!(R::USIZE <= 8, "scrypt_ro_mix_interleaved_ex_zmm: R > 8");
+        assert!(
+            R::USIZE <= MAX_R_FOR_UNROLLING,
+            "scrypt_ro_mix_interleaved_ex_zmm: R > {}",
+            MAX_R_FOR_UNROLLING
+        );
         let self_v = self.v.as_mut();
         let other_v = other.v.as_mut();
 
@@ -639,30 +645,52 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
         idx = idx & (n - 1);
         let mut input_b =
             InRegisterAdapter::<R>::init_with_block(unsafe { self_v.get_unchecked(n) });
-        let mut input_t = InRegisterAdapter::<R>::new();
 
         for i in (0..n).step_by(2) {
+            let mut input_t = InRegisterAdapter::<R>::new();
             // SAFETY: the largest i value is n-2, so the largest index is n, which is in bounds after the >=n+1 check
             let [src, middle, dst] =
                 unsafe { other_v.get_disjoint_unchecked_mut([i, i + 1, i + 2]) };
 
-            scrypt_block_mix_mb2::<R, S, _, _, _, _>(
-                &*src,
-                &mut *middle,
-                // SAFETY: idx is & (n - 1) so it's always in bounds after the >=n+1 check
-                (unsafe { self_v.get_unchecked(idx) }, &input_b),
-                &mut input_t,
-            );
-            idx = input_t.extract_idx() as usize & (n - 1);
-
-            {
+            let [self_vj, self_t] = unsafe { self_v.get_disjoint_unchecked_mut([idx, n + 1]) };
+            if R::USIZE <= MAX_R_FOR_FULL_INTERLEAVED_ZMM {
                 scrypt_block_mix_mb2::<R, S, _, _, _, _>(
-                    &*middle,
-                    &mut *dst,
+                    &*src,
+                    &mut *middle,
                     // SAFETY: idx is & (n - 1) so it's always in bounds after the >=n+1 check
-                    (unsafe { self_v.get_unchecked(idx) }, &input_t),
-                    &mut input_b,
+                    (&*self_vj, &input_b),
+                    &mut input_t,
                 );
+                idx = input_t.extract_idx() as usize & (n - 1);
+            } else {
+                scrypt_block_mix_mb2::<R, S, _, _, _, _>(
+                    &*src,
+                    &mut *middle,
+                    // SAFETY: idx is & (n - 1) so it's always in bounds after the >=n+1 check
+                    (&*self_vj, &input_b),
+                    &mut *self_t,
+                );
+                idx = { self_t[Mul32::<R>::USIZE - 16] as usize } & (n - 1);
+            }
+
+            let [self_vj, self_t] = unsafe { self_v.get_disjoint_unchecked_mut([idx, n + 1]) };
+            {
+                if R::USIZE <= MAX_R_FOR_FULL_INTERLEAVED_ZMM {
+                    scrypt_block_mix_mb2::<R, S, _, _, _, _>(
+                        &*middle,
+                        &mut *dst,
+                        // SAFETY: idx is & (n - 1) so it's always in bounds after the >=n+1 check
+                        (&*self_vj, &input_t),
+                        &mut input_b,
+                    );
+                } else {
+                    scrypt_block_mix_mb2::<R, S, _, _, _, _>(
+                        &*middle,
+                        &mut *dst,
+                        (&*self_vj, &*self_t),
+                        &mut input_b,
+                    );
+                }
 
                 idx = input_b.extract_idx() as usize & (n - 1);
             }
@@ -865,8 +893,7 @@ pub(crate) fn scrypt_block_mix<
         };
     }
 
-    // unroll if R <= 8
-    if R::USIZE <= 8 {
+    if R::USIZE <= MAX_R_FOR_UNROLLING {
         repeat8!(i, {
             if i >= R::USIZE {
                 return;
@@ -936,8 +963,7 @@ pub(crate) fn scrypt_block_mix_mb2<
         };
     }
 
-    // unroll if R <= 8
-    if R::USIZE <= 8 {
+    if R::USIZE <= MAX_R_FOR_UNROLLING {
         repeat8!(i, {
             if i >= R::USIZE {
                 return;

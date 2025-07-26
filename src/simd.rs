@@ -45,6 +45,36 @@ where
     const INDEX: [usize; N] = <Self as Swizzle<N>>::INDEX;
 }
 
+/// Flip the lower 16 lanes with the upper 16 lanes of a permutation table
+pub struct FlipTable16<T: Swizzle<16>> {
+    _marker: core::marker::PhantomData<T>,
+}
+
+impl<T: Swizzle<16>> Swizzle<16> for FlipTable16<T> {
+    const INDEX: [usize; 16] = const {
+        let mut index = [0; 16];
+        let mut i = 0;
+        while i < 16 {
+            let original_index = T::INDEX[i];
+            index[i] = if original_index > 16 {
+                original_index - 16
+            } else {
+                original_index + 16
+            };
+            i += 1;
+        }
+        index
+    };
+}
+
+#[cfg(feature = "portable-simd")]
+impl<T: Swizzle<16>> core::simd::Swizzle<16> for FlipTable16<T>
+where
+    core::simd::LaneCount<16>: core::simd::SupportedLaneCount,
+{
+    const INDEX: [usize; 16] = <Self as Swizzle<16>>::INDEX;
+}
+
 /// Map the inner indices to the lower half of the two lower halves of the output vector
 pub struct ConcatLo<const N: usize, T: Swizzle<N>> {
     _marker: core::marker::PhantomData<T>,

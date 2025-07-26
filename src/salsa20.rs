@@ -36,7 +36,7 @@ use core::simd::{Swizzle as _, num::SimdUint, u32x4, u32x8, u32x16};
 )]
 use crate::{
     Align64,
-    simd::{Compose, ConcatLo, ExtractU32x2, Inverse, Swizzle},
+    simd::{Compose, ConcatLo, ExtractU32x2, FlipTable16, Inverse, Swizzle},
 };
 
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512vl"))]
@@ -126,14 +126,14 @@ impl Swizzle<16> for Pivot2Ab {
 }
 
 /// Pivot two independent blocks into column-major order, extract C and D
-struct Pivot2CdFlipped;
+struct Pivot2Cd;
 
-impl Swizzle<16> for Pivot2CdFlipped {
+impl Swizzle<16> for Pivot2Cd {
     const INDEX: [usize; 16] = const {
         let mut index = [0; 16];
         let mut i = 0;
         while i < 16 {
-            let offset = if (i / 4) % 2 == 1 { 0 } else { 16 };
+            let offset = if (i / 4) % 2 == 0 { 0 } else { 16 };
             index[i] = <Pivot as Swizzle<16>>::INDEX[8 + i / 8 * 4 + i % 4] + offset;
             i += 1;
         }
@@ -180,7 +180,7 @@ impl core::simd::Swizzle<16> for Pivot2Ab {
 }
 
 #[cfg(feature = "portable-simd")]
-impl core::simd::Swizzle<16> for Pivot2CdFlipped {
+impl core::simd::Swizzle<16> for Pivot2Cd {
     const INDEX: [usize; 16] = <Self as Swizzle<16>>::INDEX;
 }
 
@@ -455,10 +455,10 @@ impl Salsa20 for BlockAvx512F2 {
                 save_0_alias = in(zmm_reg) self.buf0,
                 save_1_cd_out = inout(zmm_reg) save_1_cd_out,
                 perm_ab = in(zmm_reg) Pivot2Ab::INDEX_ZMM,
-                perm_cd_flipped = in(zmm_reg) Pivot2CdFlipped::INDEX_ZMM,
+                perm_cd_flipped = in(zmm_reg) FlipTable16::<Pivot2Cd>::INDEX_ZMM,
                 b = out(ymm_reg) b,
                 d = out(ymm_reg) d,
-                options(pure, nomem, nostack),
+                options(pure, nomem, nostack, preserves_flags),
             );
 
             let mut a = _mm512_castsi512_si256(save_0_ab_out);
@@ -492,16 +492,18 @@ impl Salsa20 for BlockAvx512F2 {
                     >::INDEX_ZMM,
                     c0c1d0d1,
                 );
-            let buf1_output =
-                _mm512_permutex2var_epi32(
-                    a0a1b0b1,
-                    Compose::<
+            // use a flipped table for smaller register pressure
+            let buf1_output = _mm512_permutex2var_epi32(
+                c0c1d0d1,
+                FlipTable16::<
+                    Compose<
                         _,
                         ExtractU32x2<_, true>,
                         Compose<_, RoundShuffleAbcd, Inverse<_, Pivot>>,
-                    >::INDEX_ZMM,
-                    c0c1d0d1,
-                );
+                    >,
+                >::INDEX_ZMM,
+                a0a1b0b1,
+            );
 
             self.buf0 = _mm512_add_epi32(self.buf0, buf0_output);
             self.buf1 = _mm512_add_epi32(self.buf1, buf1_output);
@@ -619,7 +621,7 @@ impl Salsa20 for BlockPortableSimd2 {
         }
 
         let aabb = Pivot2Ab::concat_swizzle(self.save0, self.save1);
-        let ccdd = Pivot2CdFlipped::concat_swizzle(self.save1, self.save0);
+        let ccdd = FlipTable16::<Pivot2Cd>::concat_swizzle(self.save1, self.save0);
 
         let mut a = aabb.extract::<0, 8>();
         let mut b = aabb.extract::<8, 8>();
