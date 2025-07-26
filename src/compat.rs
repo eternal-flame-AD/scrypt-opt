@@ -314,6 +314,7 @@ unsafe extern "C" fn scrypt_ro_mix(
 
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen(js_name = "scrypt")]
+#[cfg_attr(test, mutants::skip)]
 /// WASM bindings for scrypt, it's not really (much) faster on SIMD due to the complete lack of wide SIMD support, just a wrapper for API compatibility.
 pub fn scrypt_wasm(password: &[u8], salt: &[u8], n: u32, r: u32, p: u32, dklen: usize) -> String {
     let log2_n = NonZeroU8::new(n.trailing_zeros() as u8).unwrap();
