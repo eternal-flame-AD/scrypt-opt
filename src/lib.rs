@@ -914,26 +914,23 @@ pub(crate) fn scrypt_block_mix<
     let mut x = input.load(R::USIZE * 2 - 1);
 
     macro_rules! iteration {
-        ($i:expr) => {
-            let mut t = input.load(2 * $i);
-            t.xor_with(x);
+        ($i:expr) => {{
+            x.xor_with(input.load(2 * $i));
 
-            let mut b0 = S::read(GenericArray::from_array([&t]));
+            let mut b0 = S::read(GenericArray::from_array([&x]));
             b0.keystream::<4>();
-            b0.write(GenericArray::from_array([&mut t]));
+            b0.write(GenericArray::from_array([&mut x]));
 
-            output.store_even($i, t);
+            output.store_even($i, x);
 
-            t.xor_with(input.load(2 * $i + 1));
+            x.xor_with(input.load(2 * $i + 1));
 
-            let mut b1 = S::read(GenericArray::from_array([&t]));
+            let mut b1 = S::read(GenericArray::from_array([&x]));
             b1.keystream::<4>();
-            b1.write(GenericArray::from_array([&mut t]));
+            b1.write(GenericArray::from_array([&mut x]));
 
-            x = t;
-
-            output.store_odd($i, t);
-        };
+            output.store_odd($i, x);
+        }};
     }
 
     if R::USIZE <= MAX_R_FOR_UNROLLING {
@@ -978,32 +975,27 @@ pub(crate) fn scrypt_block_mix_mb2<
     let mut x1 = input1.load(R::USIZE * 2 - 1);
 
     macro_rules! iteration {
-        ($i:expr) => {
-            let mut t0 = input0.load(2 * $i);
-            t0.xor_with(x0);
-            let mut t1 = input1.load(2 * $i);
-            t1.xor_with(x1);
+        ($i:expr) => {{
+            x0.xor_with(input0.load(2 * $i));
+            x1.xor_with(input1.load(2 * $i));
 
-            let mut b0 = S::read(GenericArray::from_array([&t0, &t1]));
+            let mut b0 = S::read(GenericArray::from_array([&x0, &x1]));
             b0.keystream::<4>();
-            b0.write(GenericArray::from_array([&mut t0, &mut t1]));
+            b0.write(GenericArray::from_array([&mut x0, &mut x1]));
 
-            output0.store_even($i, t0);
-            output1.store_even($i, t1);
+            output0.store_even($i, x0);
+            output1.store_even($i, x1);
 
-            t0.xor_with(input0.load(2 * $i + 1));
-            t1.xor_with(input1.load(2 * $i + 1));
+            x0.xor_with(input0.load(2 * $i + 1));
+            x1.xor_with(input1.load(2 * $i + 1));
 
-            let mut b0 = S::read(GenericArray::from_array([&t0, &t1]));
+            let mut b0 = S::read(GenericArray::from_array([&x0, &x1]));
             b0.keystream::<4>();
-            b0.write(GenericArray::from_array([&mut t0, &mut t1]));
+            b0.write(GenericArray::from_array([&mut x0, &mut x1]));
 
-            x0 = t0;
-            x1 = t1;
-
-            output0.store_odd($i, t0);
-            output1.store_odd($i, t1);
-        };
+            output0.store_odd($i, x0);
+            output1.store_odd($i, x1);
+        }};
     }
 
     if R::USIZE <= MAX_R_FOR_UNROLLING {
