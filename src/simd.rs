@@ -56,7 +56,7 @@ impl<T: Swizzle<16>> Swizzle<16> for FlipTable16<T> {
         let mut i = 0;
         while i < 16 {
             let original_index = T::INDEX[i];
-            index[i] = if original_index > 16 {
+            index[i] = if original_index >= 16 {
                 original_index - 16
             } else {
                 original_index + 16
