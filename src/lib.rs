@@ -27,6 +27,49 @@ macro_rules! repeat8 {
     }};
 }
 
+#[rustfmt::skip]
+macro_rules! match_r {
+    ($r:expr, $b:ident, $c:block) => {{
+        use generic_array::typenum::*;
+
+        match $r {
+            1 => { type $b = U1; Some($c) },
+            2 => { type $b = U2; Some($c) },
+            3 => { type $b = U3; Some($c) },
+            4 => { type $b = U4; Some($c) },
+            5 => { type $b = U5; Some($c) },
+            6 => { type $b = U6; Some($c) },
+            7 => { type $b = U7; Some($c) },
+            8 => { type $b = U8; Some($c) },
+            9 => { type $b = U9; Some($c) },
+            10 => { type $b = U10; Some($c) },
+            11 => { type $b = U11; Some($c) },
+            12 => { type $b = U12; Some($c) },
+            13 => { type $b = U13; Some($c) },
+            14 => { type $b = U14; Some($c) },
+            15 => { type $b = U15; Some($c) },
+            16 => { type $b = U16; Some($c) },
+            17 => { type $b = U17; Some($c) },
+            18 => { type $b = U18; Some($c) },
+            19 => { type $b = U19; Some($c) },
+            20 => { type $b = U20; Some($c) },
+            21 => { type $b = U21; Some($c) },
+            22 => { type $b = U22; Some($c) },
+            23 => { type $b = U23; Some($c) },
+            24 => { type $b = U24; Some($c) },
+            25 => { type $b = U25; Some($c) },
+            26 => { type $b = U26; Some($c) },
+            27 => { type $b = U27; Some($c) },
+            28 => { type $b = U28; Some($c) },
+            29 => { type $b = U29; Some($c) },
+            30 => { type $b = U30; Some($c) },
+            31 => { type $b = U31; Some($c) },
+            32 => { type $b = U32; Some($c) },
+            _ => None,
+        }
+    }};
+}
+
 /// Re-export sha2
 pub use sha2;
 

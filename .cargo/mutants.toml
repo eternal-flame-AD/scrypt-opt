@@ -1,0 +1,4 @@
+exclude_globs = ["src/main.rs", "src/compat.rs"]
+test_tool = "nextest"
+all_features = true
+cap_lints = true

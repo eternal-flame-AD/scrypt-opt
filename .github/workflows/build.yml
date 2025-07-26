@@ -1,0 +1,82 @@
+name: Build Artifacts
+
+permissions:
+  contents: read
+
+on:
+  push:
+
+env:
+  CARGO_TERM_COLOR: always
+  FEATURE_SET_LIB: std portable-simd
+  FEATURE_SET_BIN: bin portable-simd core_affinity huge-page
+  TARGET_MCPUS: skylake skylake-avx512 sapphirerapids znver4
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install cross compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mingw-w64 gcc-mingw-w64-x86-64-win32
+
+      - name: Install nightly toolchain and musl target
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rust-src
+          targets: x86_64-unknown-linux-musl
+
+      - name: Build artifacts for musl target
+        run: |
+            mkdir -p tmp/artifacts
+            TARGET=x86_64-unknown-linux-musl
+            for mcpu in $TARGET_MCPUS; do
+                RUSTFLAGS="-Ctarget-cpu=$mcpu" cargo build --profile release --lib --features "$FEATURE_SET_LIB" --target-dir target/$mcpu --target $TARGET 
+                cp target/$mcpu/$TARGET/release/libscrypt_opt.a tmp/artifacts/libscrypt_opt-$mcpu.a
+                RUSTFLAGS="-Ctarget-cpu=$mcpu" cargo build --profile release --bin scrypt-opt --features "$FEATURE_SET_BIN" --target-dir target/$mcpu --target $TARGET
+                cp target/$mcpu/$TARGET/release/scrypt-opt tmp/artifacts/scrypt-opt-$mcpu
+            done
+            
+      - name: Install nightly toolchain and GNU target
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rust-src
+          targets: x86_64-unknown-linux-gnu
+
+      - name: Build artifacts for gnu target
+        run: |
+            mkdir -p tmp/artifacts
+            TARGET=x86_64-unknown-linux-gnu
+            for mcpu in $TARGET_MCPUS; do
+                RUSTFLAGS="-Ctarget-cpu=$mcpu" cargo build --lib --profile release --features "$FEATURE_SET_LIB" --target-dir target/$mcpu --target $TARGET
+                cp target/$mcpu/$TARGET/release/libscrypt_opt.so tmp/artifacts/libscrypt_opt-$mcpu.so
+            done
+      
+      - name: Install nightly toolchain and windows target
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rust-src
+          targets: x86_64-pc-windows-gnu
+
+      - name: Build artifacts for windows target
+        run: |
+            mkdir -p tmp/artifacts
+            TARGET=x86_64-pc-windows-gnu
+            for mcpu in $TARGET_MCPUS; do
+                RUSTFLAGS="-Ctarget-cpu=$mcpu" cargo build --lib --profile release --features "$FEATURE_SET_LIB" --target-dir target/$mcpu --target $TARGET
+                cp target/$mcpu/$TARGET/release/scrypt_opt.dll tmp/artifacts/scrypt_opt-$mcpu.dll
+                RUSTFLAGS="-Ctarget-cpu=$mcpu" cargo build --bin scrypt-opt --profile release --features "$FEATURE_SET_BIN" --target-dir target/$mcpu --target $TARGET
+                cp target/$mcpu/$TARGET/release/scrypt-opt.exe tmp/artifacts/scrypt-opt-$mcpu.exe
+            done
+      
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: scrypt-opt
+          path: tmp/artifacts/*
+

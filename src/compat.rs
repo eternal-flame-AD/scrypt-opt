@@ -12,6 +12,15 @@ use wasm_bindgen::prelude::*;
 
 use crate::{Align64, Block, BufferSet, pbkdf2_1::Pbkdf2HmacSha256State};
 
+/// API constants for unsupported parameters.
+pub const SCRYPT_OPT_UNSUPPORTED_PARAM_SPACE: core::ffi::c_int = -1;
+
+/// API constants for invalid buffer sizes.
+pub const SCRYPT_OPT_INVALID_BUFFER_SIZE: core::ffi::c_int = -2;
+
+/// API constants for invalid buffer alignments.
+pub const SCRYPT_OPT_INVALID_BUFFER_ALIGNMENT: core::ffi::c_int = -3;
+
 #[inline(never)]
 fn scrypt_impl<R: ArrayLength + NonZero>(
     password: &[u8],
@@ -132,22 +141,180 @@ pub unsafe extern "C" fn scrypt_c(
 ) -> core::ffi::c_int {
     let log2_n = n.trailing_zeros();
     if log2_n == 0 || 1 << log2_n != n {
-        return -1;
+        return SCRYPT_OPT_UNSUPPORTED_PARAM_SPACE;
     }
     let Some(log2_n) = NonZeroU8::new(log2_n as u8) else {
-        return -1;
+        return SCRYPT_OPT_UNSUPPORTED_PARAM_SPACE;
     };
     let password = unsafe { core::slice::from_raw_parts(password, password_len) };
     let salt = unsafe { core::slice::from_raw_parts(salt, salt_len) };
     let output = unsafe { core::slice::from_raw_parts_mut(output, output_len) };
     if !scrypt(password, salt, log2_n, r, p, output) {
-        return -1;
+        return SCRYPT_OPT_UNSUPPORTED_PARAM_SPACE;
     }
     0
 }
 
+/// Compute the minimum buffer length in bytes to allocate for [`scrypt_ro_mix`].
+///
+/// Returns 0 if the parameters are invalid or unsupported.
+///
+/// ```c
+/// #include <stdlib.h>
+///
+/// extern size_t scrypt_ro_mix_minimum_buffer_len(unsigned int r, unsigned int cf);
+///
+/// int main() {
+///     int minimum_buffer_len = scrypt_ro_mix_minimum_buffer_len(1, 1);
+///     printf("Minimum buffer length: %d\n", minimum_buffer_len);
+///     if (!minimum_buffer_len) {
+///         return 1;
+///     }
+///     void* alloc = aligned_alloc(64, minimum_buffer_len);
+///     if (alloc == NULL) {
+///         return 2;
+///     }
+///     scrypt_ro_mix(alloc, alloc, r, cf, minimum_buffer_len);
+///     return 0;
+/// }
+/// ```
+#[unsafe(export_name = "scrypt_ro_mix_minimum_buffer_len")]
+unsafe extern "C" fn scrypt_ro_mix_minimum_buffer_len(
+    r: core::ffi::c_uint,
+    cf: core::ffi::c_uint,
+) -> usize {
+    let Ok(cf) = cf.try_into() else {
+        return 0;
+    };
+    let Some(cf) = NonZeroU8::new(cf) else {
+        return 0;
+    };
+
+    match_r!(r, R, {
+        let num_blocks = BufferSet::<&mut [Align64<Block<R>>], R>::minimum_blocks(cf);
+        num_blocks * core::mem::size_of::<Align64<Block<R>>>() as usize
+    })
+    .unwrap_or(0)
+}
+
+/// C export for scrypt_ro_mix.
+///
+/// Parameters:
+/// - `front_buffer`: In. Pointer to the buffer to perform the RoMix_front operation on. Can be null.
+/// - `back_buffer`: In. Pointer to the buffer to perform the RoMix_back operation on. Can be null. Cannot be an alias of the front buffer.
+/// - `salt_output`: Out. Pointer to receive a pointer to the raw salt that corresponds to the back buffer. Can be null.
+/// - `r`: In. R value.
+/// - `cf`: In. Cost factor.
+/// - `minimum_buffer_size`: In. The smaller of the two buffer sizes.
+///
+/// Returns:
+/// - 0 on success.
+/// - `SCRYPT_OPT_INVALID_BUFFER_SIZE` if the parameters are invalid.
+/// - `SCRYPT_OPT_INVALID_BUFFER_ALIGNMENT` if the buffers are not 64-byte aligned.
+/// - `SCRYPT_OPT_UNSUPPORTED_PARAM_SPACE` if the parameters are unsupported.
+#[unsafe(export_name = "scrypt_ro_mix")]
+unsafe extern "C" fn scrypt_ro_mix(
+    front_buffer: *mut u8,
+    back_buffer: *mut u8,
+    salt_output: *mut *const u8,
+    r: u32,
+    cf: u8,
+    minimum_buffer_size: usize,
+) -> core::ffi::c_int {
+    if r == 0 {
+        return SCRYPT_OPT_UNSUPPORTED_PARAM_SPACE;
+    }
+
+    let Some(cf) = NonZeroU8::new(cf) else {
+        return SCRYPT_OPT_UNSUPPORTED_PARAM_SPACE;
+    };
+
+    // if both buffers are null, we can't do anything
+    if front_buffer.is_null() && back_buffer.is_null() {
+        return SCRYPT_OPT_INVALID_BUFFER_SIZE;
+    }
+
+    // if the front buffer is not null, it must be 64-byte aligned
+    if !front_buffer.is_null() && front_buffer.align_offset(64) != 0 {
+        return SCRYPT_OPT_INVALID_BUFFER_ALIGNMENT;
+    }
+    // if the back buffer is not null, it must be 64-byte aligned
+    if !back_buffer.is_null() && back_buffer.align_offset(64) != 0 {
+        return SCRYPT_OPT_INVALID_BUFFER_ALIGNMENT;
+    }
+
+    // if the back buffer is null, the salt output must be null
+    if back_buffer.is_null() && !salt_output.is_null() {
+        return SCRYPT_OPT_INVALID_BUFFER_SIZE;
+    }
+
+    match_r!(r, R, {
+        let available_blocks = minimum_buffer_size / core::mem::size_of::<Align64<Block<R>>>();
+
+        let minimum_blocks = BufferSet::<&mut [Align64<Block<R>>], R>::minimum_blocks(cf);
+        if available_blocks < minimum_blocks {
+            return SCRYPT_OPT_INVALID_BUFFER_SIZE;
+        }
+
+        if front_buffer.is_null() {
+            let buffer_back = unsafe {
+                core::slice::from_raw_parts_mut(
+                    back_buffer.cast::<Align64<Block<R>>>(),
+                    minimum_blocks,
+                )
+            };
+            let mut buffer1 = BufferSet::<_, R>::new(buffer_back);
+            buffer1.pipeline_drain();
+            if !salt_output.is_null() {
+                unsafe {
+                    *salt_output = buffer1.raw_salt_output().as_ptr().cast();
+                }
+            }
+        } else if back_buffer.is_null() {
+            let buffer_front = unsafe {
+                core::slice::from_raw_parts_mut(
+                    front_buffer.cast::<Align64<Block<R>>>(),
+                    minimum_blocks,
+                )
+            };
+            let mut buffer0 = BufferSet::<_, R>::new(buffer_front);
+            buffer0.pipeline_start();
+        } else {
+            let buffer_back = unsafe {
+                core::slice::from_raw_parts_mut(
+                    back_buffer.cast::<Align64<Block<R>>>(),
+                    minimum_blocks,
+                )
+            };
+
+            let mut buffer_back = BufferSet::<_, R>::new(buffer_back);
+            if back_buffer == front_buffer {
+                buffer_back.scrypt_ro_mix();
+            } else {
+                let buffer_front = unsafe {
+                    core::slice::from_raw_parts_mut(
+                        front_buffer.cast::<Align64<Block<R>>>(),
+                        minimum_blocks,
+                    )
+                };
+
+                buffer_back.scrypt_ro_mix_interleaved(&mut BufferSet::<_, R>::new(buffer_front));
+            }
+
+            if !salt_output.is_null() {
+                unsafe {
+                    *salt_output = buffer_back.raw_salt_output().as_ptr().cast();
+                }
+            }
+        }
+    })
+    .map(|_| 0)
+    .unwrap_or(SCRYPT_OPT_UNSUPPORTED_PARAM_SPACE)
+}
+
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen(js_name = "scrypt")]
+#[cfg_attr(test, mutants::skip)]
 /// WASM bindings for scrypt, it's not really (much) faster on SIMD due to the complete lack of wide SIMD support, just a wrapper for API compatibility.
 pub fn scrypt_wasm(password: &[u8], salt: &[u8], n: u32, r: u32, p: u32, dklen: usize) -> String {
     let log2_n = NonZeroU8::new(n.trailing_zeros() as u8).unwrap();
@@ -181,4 +348,117 @@ pub fn scrypt_wasm(password: &[u8], salt: &[u8], n: u32, r: u32, p: u32, dklen: 
         };
     }
     unsafe { String::from_utf8_unchecked(result) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_scrypt_ro_mix_api<R: ArrayLength + NonZero>() {
+        const CF: u8 = 10;
+        unsafe {
+            let mut reference_buffer0 = BufferSet::<_, R>::new_boxed(CF.try_into().unwrap());
+            let mut reference_buffer1 = BufferSet::<_, R>::new_boxed(CF.try_into().unwrap());
+            reference_buffer0.set_input(&Pbkdf2HmacSha256State::new(b"password0"), b"salt");
+            reference_buffer1.set_input(&Pbkdf2HmacSha256State::new(b"password1"), b"salt");
+
+            let min_buffer_len = scrypt_ro_mix_minimum_buffer_len(R::U32, CF as u32);
+            let layout = alloc::alloc::Layout::from_size_align(min_buffer_len, 64).unwrap();
+
+            let alloc0 = alloc::alloc::alloc(layout);
+            assert!(!alloc0.is_null());
+            let alloc0 = core::slice::from_raw_parts_mut(alloc0, min_buffer_len);
+            let alloc1 = alloc::alloc::alloc(layout);
+            assert!(!alloc1.is_null());
+            let alloc1 = core::slice::from_raw_parts_mut(alloc1, min_buffer_len);
+
+            let input_slice = reference_buffer1.input_buffer().transmute_as_u8();
+            alloc1[..input_slice.len()].copy_from_slice(input_slice);
+            let input_slice = reference_buffer0.input_buffer().transmute_as_u8();
+            alloc0[..input_slice.len()].copy_from_slice(input_slice);
+
+            scrypt_ro_mix(
+                alloc0.as_mut_ptr().cast(),
+                core::ptr::null_mut(),
+                core::ptr::null_mut(),
+                R::U32,
+                CF,
+                min_buffer_len,
+            );
+
+            let mut alloc0_salt_output = core::ptr::null();
+
+            assert_eq!(
+                scrypt_ro_mix(
+                    alloc1.as_mut_ptr().cast(),
+                    alloc0.as_mut_ptr().cast(),
+                    &mut alloc0_salt_output,
+                    R::U32,
+                    CF,
+                    min_buffer_len,
+                ),
+                0
+            );
+
+            let mut alloc1_salt_output = core::ptr::null();
+
+            assert_eq!(
+                scrypt_ro_mix(
+                    core::ptr::null_mut(),
+                    alloc1.as_mut_ptr().cast(),
+                    &mut alloc1_salt_output,
+                    R::U32,
+                    CF,
+                    min_buffer_len,
+                ),
+                0
+            );
+
+            reference_buffer0.scrypt_ro_mix();
+            reference_buffer1.scrypt_ro_mix();
+            assert_eq!(
+                core::slice::from_raw_parts(
+                    alloc0_salt_output,
+                    reference_buffer0.raw_salt_output().transmute_as_u8().len()
+                ),
+                reference_buffer0
+                    .raw_salt_output()
+                    .transmute_as_u8()
+                    .as_slice()
+            );
+            assert_eq!(
+                core::slice::from_raw_parts(
+                    alloc1_salt_output,
+                    reference_buffer1.raw_salt_output().transmute_as_u8().len()
+                ),
+                reference_buffer1
+                    .raw_salt_output()
+                    .transmute_as_u8()
+                    .as_slice()
+            );
+
+            alloc::alloc::dealloc(alloc0.as_mut_ptr().cast(), layout);
+            alloc::alloc::dealloc(alloc1.as_mut_ptr().cast(), layout);
+        }
+    }
+
+    #[test]
+    fn test_scrypt_ro_mix_api_1() {
+        test_scrypt_ro_mix_api::<U1>();
+    }
+
+    #[test]
+    fn test_scrypt_ro_mix_api_2() {
+        test_scrypt_ro_mix_api::<U2>();
+    }
+
+    #[test]
+    fn test_scrypt_ro_mix_api_8() {
+        test_scrypt_ro_mix_api::<U8>();
+    }
+
+    #[test]
+    fn test_scrypt_ro_mix_api_16() {
+        test_scrypt_ro_mix_api::<U16>();
+    }
 }
