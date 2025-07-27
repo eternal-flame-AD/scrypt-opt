@@ -3,11 +3,13 @@
         "std",
         "bin",
         "portable-simd",
-        "huge-page"
+        "huge-page",
+        "core_affinity"
     ],
     "rust-analyzer.cargo.cfgs": [
         "debug_assertions",
         "miri",
         "target_feature=avx512f"
-    ]
+    ],
+    "rust-analyzer.cargo.target": "x86_64-unknown-linux-gnu"
 }

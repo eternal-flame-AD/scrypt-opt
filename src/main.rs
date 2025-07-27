@@ -24,13 +24,14 @@ use scrypt_opt::{
 #[cfg(feature = "core_affinity")]
 use std::num::NonZeroUsize;
 
+use std::ops::DerefMut;
 use std::{
     io::{Read, Write},
     marker::PhantomData,
-    num::{NonZeroU8, NonZeroU64},
+    num::{NonZeroU8, NonZeroU32, NonZeroU64},
     sync::{
-        Arc, Condvar, Mutex,
-        atomic::{AtomicBool, AtomicU64, AtomicUsize},
+        Mutex,
+        atomic::{AtomicBool, AtomicU64},
     },
 };
 
@@ -133,13 +134,16 @@ enum Command {
 #[derive(Parser)]
 struct Args {
     #[arg(short, long, default_value = "1")]
-    num_threads: usize,
+    num_threads: NonZeroU32,
     #[cfg(feature = "core_affinity")]
     #[arg(short, long, default_value = "1")]
     core_stride: NonZeroUsize,
     #[command(subcommand)]
     command: Command,
 }
+
+#[cfg(all(target_os = "linux", feature = "huge-page"))]
+const HUGE_PAGE_ENVIRON_NAME: &str = "HUGETLBFS_MOUNT_POINT";
 
 const KAT_PASSWORD: [u8; 13] = *b"pleaseletmein";
 const KAT_SALT: &[u8] = b"SodiumChloride";
@@ -155,6 +159,126 @@ fn slurp_stdin() -> Box<[u8]> {
     let mut buffer = Vec::new();
     stdin.read_to_end(&mut buffer).unwrap();
     buffer.into_boxed_slice()
+}
+
+struct MultiThreadedHugeSlice<T> {
+    len_per_thread: usize,
+    num_threads: NonZeroU32,
+    inner: scrypt_opt::memory::MaybeHugeSlice<T>,
+    // important: this must be dropped after the inner is dropped
+    #[cfg(target_os = "linux")]
+    _hugetlb_file: Option<tempfile::NamedTempFile>,
+    _marker: PhantomData<T>,
+}
+
+impl<T> MultiThreadedHugeSlice<T> {
+    fn new(len_per_thread: usize, num_threads: NonZeroU32) -> Self {
+        if len_per_thread == 0 {
+            return Self {
+                len_per_thread,
+                num_threads,
+                inner: scrypt_opt::memory::MaybeHugeSlice::new_slice_zeroed(0),
+                #[cfg(target_os = "linux")]
+                _hugetlb_file: None,
+                _marker: PhantomData,
+            };
+        }
+
+        // handle HugeTLBFS backed allocation
+        #[cfg(all(target_os = "linux", feature = "huge-page"))]
+        {
+            if let Ok(dir) = std::env::var(HUGE_PAGE_ENVIRON_NAME) {
+                let file =
+                    tempfile::NamedTempFile::new_in(dir).expect("failed to create huge page file");
+
+                let dupped = file.reopen().expect("failed to reopen huge page file");
+
+                let inner = scrypt_opt::memory::MaybeHugeSlice::new_in(
+                    len_per_thread
+                        .checked_mul(num_threads.get() as usize)
+                        .expect("size overflow"),
+                    dupped,
+                )
+                .expect("failed to create huge page");
+
+                eprintln!("HugeTLBFS backed allocation successful");
+
+                return Self {
+                    len_per_thread,
+                    num_threads,
+                    inner,
+                    #[cfg(target_os = "linux")]
+                    _hugetlb_file: Some(file),
+                    _marker: PhantomData,
+                };
+            }
+
+            // if /dev/hugepages exists, try it before trying anonymous huge pages
+            // it seems some chips (Aarch64) will fail if you ask for too big anonymous huge pages
+            if unsafe { libc::geteuid() } == 0 && std::path::Path::new("/dev/hugepages").exists() {
+                let file = tempfile::NamedTempFile::new_in("/dev/hugepages")
+                    .expect("failed to create huge page file");
+
+                let dupped = file.reopen().expect("failed to reopen huge page file");
+                match scrypt_opt::memory::MaybeHugeSlice::new_in(
+                    len_per_thread
+                        .checked_mul(num_threads.get() as usize)
+                        .expect("size overflow"),
+                    dupped,
+                ) {
+                    Ok(inner) => {
+                        eprintln!("HugeTLBFS backed allocation successful");
+                        return Self {
+                            len_per_thread,
+                            num_threads,
+                            inner,
+                            #[cfg(target_os = "linux")]
+                            _hugetlb_file: Some(file),
+                            _marker: PhantomData,
+                        };
+                    }
+                    Err(error) => {
+                        eprintln!("Failed to allocate HugeTLBFS backed huge page: {}", error);
+                    }
+                }
+            }
+        }
+
+        let (inner, error) = scrypt_opt::memory::MaybeHugeSlice::new(
+            len_per_thread
+                .checked_mul(num_threads.get() as usize)
+                .expect("size overflow"),
+        );
+
+        if let Some(error) = error {
+            eprintln!("Failed to allocate huge page: {}", error);
+        } else {
+            eprintln!("Huge Page allocation successful");
+        }
+
+        Self {
+            len_per_thread,
+            num_threads,
+            inner,
+            #[cfg(target_os = "linux")]
+            _hugetlb_file: None,
+            _marker: PhantomData,
+        }
+    }
+
+    fn get(
+        &mut self,
+    ) -> impl IntoIterator<Item = impl DerefMut<Target = impl AsMut<[T]> + ?Sized>> {
+        let mut inner = self.inner.as_mut();
+        let num_threads = self.num_threads.get();
+        let mut ret = Vec::with_capacity(num_threads as usize);
+        for _ in 0..num_threads as usize {
+            let (this, rest) = inner.split_at_mut(self.len_per_thread);
+            ret.push(this);
+            inner = rest;
+        }
+        ret.into_boxed_slice()
+    }
 }
 
 #[cfg(feature = "core_affinity")]
@@ -211,12 +335,12 @@ struct PowResult {
     elapsed: std::time::Duration,
 }
 
-fn pow<R: ArrayLength + NonZero>(
+fn pow<R: ArrayLength + NonZero + Send + Sync>(
     salt: Box<[u8]>,
     cf: NonZeroU8,
     mask: NonZeroU64,
     target: u64,
-    num_threads: usize,
+    num_threads: NonZeroU32,
     output: Box<[u8]>,
     nonce_len: usize,
     #[cfg(feature = "core_affinity")] core_stride: NonZeroUsize,
@@ -239,269 +363,209 @@ fn pow<R: ArrayLength + NonZero>(
     };
     let output_len = output.len();
 
-    let (full_slice, huge_page_error) = scrypt_opt::memory::MaybeHugeSlice::<
-        Align64<scrypt_opt::Block<R>>,
-    >::new(required_blocks * num_threads * 2);
-
-    let full_slice = Arc::new(full_slice);
-
-    #[cfg(feature = "huge-page")]
-    if let Some(e) = huge_page_error {
-        eprintln!("WARNING: failed to allocate huge page: {}", e);
-    }
-
-    #[cfg(not(feature = "huge-page"))]
-    let _ = huge_page_error;
-
-    struct State<R: ArrayLength + NonZero> {
-        full_slice: Arc<scrypt_opt::memory::MaybeHugeSlice<Align64<scrypt_opt::Block<R>>>>,
+    struct State<R: ArrayLength + NonZero + Send + Sync> {
         salt: Box<[u8]>,
         mask: NonZeroU64,
         target: u64,
         offset: isize,
         stop_signal: AtomicBool,
         retired_count: AtomicU64,
-        failed_threads: AtomicUsize,
-        solved_condvar: Condvar,
         solved_mutex: Mutex<(Box<[u8]>, u64)>,
+        _marker: PhantomData<R>,
     }
-
-    let mut state = Arc::new(State::<R> {
-        full_slice,
+    let mut full_slice = MultiThreadedHugeSlice::<Align64<scrypt_opt::Block<R>>>::new(
+        required_blocks * 2,
+        num_threads,
+    );
+    let state = State::<R> {
         salt,
         mask,
         target,
         offset: output_len as isize - 8,
         stop_signal: AtomicBool::new(false),
         retired_count: AtomicU64::new(0),
-        failed_threads: AtomicUsize::new(num_threads),
-        solved_condvar: Condvar::new(),
         solved_mutex: Mutex::new((output, NOT_A_SOLUTION)),
-    });
-
-    #[cfg(feature = "core_affinity")]
-    let mut core_assigner = CoreAffinityAssigner::new(core_stride);
-
-    // lock the mutex right now to avoid a race condition where some thread
-    // found the solution before we get to wait on the condvar
-    let mut lock = state.solved_mutex.lock().unwrap();
+        _marker: PhantomData,
+    };
 
     let start_time = std::time::Instant::now();
-    for thread_idx in 0..num_threads {
+    std::thread::scope(|s| {
         #[cfg(feature = "core_affinity")]
-        let core = core_assigner.next();
+        let mut core_assigner = CoreAffinityAssigner::new(core_stride);
 
-        let state = Arc::clone(&state);
-
-        std::thread::spawn(move || {
+        for (thread_idx, mut local_buffer) in full_slice.get().into_iter().enumerate() {
             #[cfg(feature = "core_affinity")]
-            if let Some(core) = core {
-                if !core_affinity::set_for_current(core) {
-                    eprintln!("Failed to set core affinity for thread {}", thread_idx);
-                }
-            } else {
-                eprintln!("No core affinity available for thread {}", thread_idx);
-            }
+            let core = core_assigner.next();
 
-            // pad front and back 8 bytes to ensure all possible reads are aligned
-            // the lowest possible output length is 0, which gives an offset of -8, which needs to be in bounds
-            let alloc_len = 8 + output_len + 8;
-            let mut local_output = vec![0u8; alloc_len].into_boxed_slice();
-            let alloc_start = local_output.as_ptr();
-            let alignment_offset = unsafe {
-                local_output
-                    .as_mut_ptr()
-                    .offset(state.offset)
-                    .align_offset(8)
-            };
-            assert!(
-                unsafe { local_output.as_ptr().offset(state.offset) >= alloc_start },
-                "sanity check failed: local_output.as_ptr().offset(state.offset) >= alloc_start"
-            );
-            assert!(
-                unsafe {
-                    local_output.as_ptr().offset(state.offset).add(8) < alloc_start.add(alloc_len)
-                },
-                "sanity check failed: local_output.as_ptr().offset(state.offset).add(8) < alloc_start.add(alloc_len)"
-            );
-            // slice out the middle portion for operations
-            let local_output = &mut local_output[8 + alignment_offset..][..output_len];
+            let state = &state;
 
-            let mut buffers0 =
-                scrypt_opt::BufferSet::<&mut [Align64<scrypt_opt::Block<R>>], R>::new(unsafe {
-                    core::slice::from_raw_parts_mut(
-                        state
-                            .full_slice
-                            .as_ptr()
-                            .add(thread_idx * 2 * required_blocks)
-                            .cast_mut(),
-                        required_blocks,
-                    )
-                });
-
-            let mut buffers1 =
-                scrypt_opt::BufferSet::<&mut [Align64<scrypt_opt::Block<R>>], R>::new(unsafe {
-                    core::slice::from_raw_parts_mut(
-                        state
-                            .full_slice
-                            .as_ptr()
-                            .add((thread_idx * 2 + 1) * required_blocks)
-                            .cast_mut(),
-                        required_blocks,
-                    )
-                });
-
-            struct NonceState<R: ArrayLength + NonZero> {
-                nonce: u64,
-                hmac_state: Pbkdf2HmacSha256State,
-                _marker: PhantomData<R>,
-            }
-
-            impl<'a, 'b, R: ArrayLength + NonZero>
-                PipelineContext<
-                    (&'a Arc<State<R>>, &'b mut [u8]),
-                    &mut [Align64<scrypt_opt::Block<R>>],
-                    R,
-                    u64,
-                > for NonceState<R>
-            {
-                #[inline(always)]
-                fn begin(
-                    &mut self,
-                    (pipeline_state, _local_output): &mut (&'a Arc<State<R>>, &'b mut [u8]),
-                    buffer_set: &mut BufferSet<&mut [Align64<scrypt_opt::Block<R>>], R>,
-                ) {
-                    buffer_set.set_input(&self.hmac_state, &pipeline_state.salt);
+            std::thread::Builder::new()
+                .name(format!("pow-worker-{}", thread_idx))
+                .spawn_scoped(s, move || {
+                #[cfg(feature = "core_affinity")]
+                if let Some(core) = core {
+                    if !core_affinity::set_for_current(core) {
+                        eprintln!("Failed to set core affinity for thread {}", thread_idx);
+                    }
+                } else {
+                    eprintln!("No core affinity available for thread {}", thread_idx);
                 }
 
-                #[inline(always)]
-                fn drain(
-                    self,
-                    (pipeline_state, local_output): &mut (&'a Arc<State<R>>, &'b mut [u8]),
-                    buffer_set: &mut scrypt_opt::BufferSet<&mut [Align64<scrypt_opt::Block<R>>], R>,
-                ) -> Option<u64> {
-                    buffer_set.extract_output(&self.hmac_state, local_output);
+                // pad front and back 8 bytes to ensure all possible reads are aligned
+                // the lowest possible output length is 0, which gives an offset of -8, which needs to be in bounds
+                let alloc_len = 8 + output_len + 8;
+                let mut local_output = vec![0u8; alloc_len].into_boxed_slice();
+                let alloc_start = local_output.as_ptr();
+                let alignment_offset = unsafe {
+                    local_output
+                        .as_mut_ptr()
+                        .offset(state.offset)
+                        .align_offset(8)
+                };
+                assert!(
+                    unsafe { local_output.as_ptr().offset(state.offset) >= alloc_start },
+                    "sanity check failed: local_output.as_ptr().offset(state.offset) >= alloc_start"
+                );
+                assert!(
+                    unsafe {
+                        local_output.as_ptr().offset(state.offset).add(8)
+                            < alloc_start.add(alloc_len)
+                    },
+                    "sanity check failed: local_output.as_ptr().offset(state.offset).add(8) < alloc_start.add(alloc_len)"
+                );
+                // slice out the middle portion for operations
+                let local_output = &mut local_output[8 + alignment_offset..][..output_len];
 
-                    pipeline_state
-                        .retired_count
-                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let (buffer0_inner, buffer1_inner) = local_buffer.as_mut().split_at_mut(required_blocks);
 
-                    // SAFETY: purposefully reading out of bounds, allocated 8 bytes extra for target
-                    //
-                    // pointer is manually aligned to 8 bytes at the start of the function
-                    let mut t = unsafe {
-                        local_output
-                            .as_ptr()
-                            .offset(pipeline_state.offset)
-                            .cast::<u64>()
-                            .read()
-                    };
+                let mut buffers0 =
+                    scrypt_opt::BufferSet::<&mut [Align64<scrypt_opt::Block<R>>], R>::new(
+                        buffer0_inner,
+                    );
 
-                    #[cfg(target_endian = "little")]
-                    {
-                        t = t.swap_bytes();
+                let mut buffers1 =
+                    scrypt_opt::BufferSet::<&mut [Align64<scrypt_opt::Block<R>>], R>::new(
+                        buffer1_inner,
+                    );
+
+                struct NonceState<R: ArrayLength + NonZero + Send + Sync> {
+                    nonce: u64,
+                    hmac_state: Pbkdf2HmacSha256State,
+                    _marker: PhantomData<R>,
+                }
+
+                impl<'a, 'b, R: ArrayLength + NonZero + Send + Sync>
+                    PipelineContext<
+                        (&'a State<R>, &'b mut [u8]),
+                        &mut [Align64<scrypt_opt::Block<R>>],
+                        R,
+                        u64,
+                    > for NonceState<R>
+                {
+                    #[inline(always)]
+                    fn begin(
+                        &mut self,
+                        (pipeline_state, _local_output): &mut (&'a State<R>, &'b mut [u8]),
+                        buffer_set: &mut BufferSet<&mut [Align64<scrypt_opt::Block<R>>], R>,
+                    ) {
+                        buffer_set.set_input(&self.hmac_state, &pipeline_state.salt);
                     }
 
-                    t &= pipeline_state.mask.get();
+                    #[inline(always)]
+                    fn drain(
+                        self,
+                        (pipeline_state, local_output): &mut (&'a State<R>, &'b mut [u8]),
+                        buffer_set: &mut scrypt_opt::BufferSet<
+                            &mut [Align64<scrypt_opt::Block<R>>],
+                            R,
+                        >,
+                    ) -> Option<u64> {
+                        buffer_set.extract_output(&self.hmac_state, local_output);
 
-                    let succeeded = t <= pipeline_state.target;
-                    if succeeded {
-                        return Some(self.nonce);
-                    }
+                        pipeline_state
+                            .retired_count
+                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
-                    None
-                }
-            }
+                        // SAFETY: purposefully reading out of bounds, allocated 8 bytes extra for target
+                        //
+                        // pointer is manually aligned to 8 bytes at the start of the function
+                        let mut t = unsafe {
+                            local_output
+                                .as_ptr()
+                                .offset(pipeline_state.offset)
+                                .cast::<u64>()
+                                .read()
+                        };
 
-            let result = buffers0.pipeline(
-                &mut buffers1,
-                ((thread_idx as u64)..=search_max)
-                    .step_by(num_threads)
-                    .map_while(|i| {
-                        if state.stop_signal.load(std::sync::atomic::Ordering::Relaxed) {
-                            return None;
+                        #[cfg(target_endian = "little")]
+                        {
+                            t = t.swap_bytes();
                         }
 
-                        Some(NonceState::<R> {
-                            nonce: i,
-                            // SAFETY: i.to_le_bytes() is way less than 1 SHA-256 block, so we can safely unwrap without checking
-                            hmac_state: unsafe {
-                                // we do not need to [..nonce_len] because HMAC(short_key) = HMAC(short_key || 0)
-                                Pbkdf2HmacSha256State::new_short(&i.to_le_bytes())
-                                    .unwrap_unchecked()
-                            },
-                            _marker: PhantomData,
-                        })
-                    }),
-                &mut (&state, local_output),
-            );
+                        t &= pipeline_state.mask.get();
 
-            if let Some(nonce) = result {
-                // if the solution is real we definitely can stop the search
-                // so signal ASAP
-                state
-                    .stop_signal
-                    .store(true, std::sync::atomic::Ordering::Release);
+                        let succeeded = t <= pipeline_state.target;
+                        if succeeded {
+                            return Some(self.nonce);
+                        }
 
-                // synchronize and pick our answer if no one else has gotten to this point yet
-                let mut solution = state.solved_mutex.lock().unwrap();
-                if solution.1 == NOT_A_SOLUTION {
-                    solution.0.copy_from_slice(&local_output);
-                    solution.1 = nonce;
-                    state.solved_condvar.notify_all();
+                        None
+                    }
                 }
-            } else {
-                // if all threads failed, notify the main thread as well
-                if 1 == state
-                    .failed_threads
-                    .fetch_sub(1, std::sync::atomic::Ordering::Relaxed)
-                {
+
+                let result = buffers0.pipeline(
+                    &mut buffers1,
+                    ((thread_idx as u64)..=search_max)
+                        .step_by(num_threads.get() as usize)
+                        .map_while(|i| {
+                            if state.stop_signal.load(std::sync::atomic::Ordering::Relaxed) {
+                                return None;
+                            }
+
+                            Some(NonceState::<R> {
+                                nonce: i,
+                                // SAFETY: i.to_le_bytes() is way less than 1 SHA-256 block, so we can safely unwrap without checking
+                                hmac_state: unsafe {
+                                    // we do not need to [..nonce_len] because HMAC(short_key) = HMAC(short_key || 0)
+                                    Pbkdf2HmacSha256State::new_short(&i.to_le_bytes())
+                                        .unwrap_unchecked()
+                                },
+                                _marker: PhantomData,
+                            })
+                        }),
+                    &mut (&state, local_output),
+                );
+
+                if let Some(nonce) = result {
+                    // if the solution is real we definitely can stop the search
+                    // so signal ASAP
                     state
                         .stop_signal
                         .store(true, std::sync::atomic::Ordering::Release);
 
-                    state.solved_condvar.notify_all();
+                    // synchronize and pick our answer if no one else has gotten to this point yet
+                    let mut solution = state.solved_mutex.lock().unwrap();
+                    if solution.1 == NOT_A_SOLUTION {
+                        solution.0.copy_from_slice(&local_output);
+                        solution.1 = nonce;
+                    }
                 }
-            }
-        });
-    }
-
-    loop {
-        // move the lock into the scope of the loop
-        let new_lock = state.solved_condvar.wait(lock).unwrap();
-        if state.stop_signal.load(std::sync::atomic::Ordering::Acquire) {
-            // all threads failed, return None, we don't have do further synchronization
-            if new_lock.1 == NOT_A_SOLUTION {
-                return None;
-            }
-            break;
+            })
+            .expect("failed to spawn thread");
         }
-        // spurious wakeup, move the lock back in
-        lock = new_lock;
-    }
-    let elapsed = start_time.elapsed();
+    });
 
-    // spin loop until all threads have drained their local pipeline and exited
-    loop {
-        match Arc::try_unwrap(state) {
-            Ok(state) => {
-                let inner = Mutex::into_inner(state.solved_mutex).unwrap();
-                let retired_count = state
-                    .retired_count
-                    .load(std::sync::atomic::Ordering::Relaxed);
-                return Some(PowResult {
-                    nonce: inner.1,
-                    output: inner.0,
-                    actual_iterations: retired_count,
-                    elapsed,
-                });
-            }
-            Err(new_state) => {
-                state = new_state;
-            }
-        }
-        std::hint::spin_loop();
-    }
+    let lock = Mutex::into_inner(state.solved_mutex).expect("some solver panicked");
+    let retired_count = state
+        .retired_count
+        .load(std::sync::atomic::Ordering::Relaxed);
+
+    Some(PowResult {
+        nonce: lock.1,
+        output: lock.0,
+        actual_iterations: retired_count,
+        elapsed: start_time.elapsed(),
+    })
 }
 
 fn cast(fast: bool) {
@@ -534,143 +598,145 @@ fn cast(fast: bool) {
 }
 
 fn throughput<Pipeline: Bit, R: ArrayLength + NonZero>(
-    num_threads: usize,
+    num_threads: NonZeroU32,
     cf: NonZeroU8,
     #[cfg(feature = "core_affinity")] core_stride: NonZeroUsize,
 ) {
-    let counter = Arc::new(AtomicU64::new(0));
+    let counter = AtomicU64::new(0);
 
     let required_blocks =
         scrypt_opt::BufferSet::<&mut [Align64<scrypt_opt::Block<R>>], R>::minimum_blocks(cf);
 
-    let (full_slice, huge_page_error) = scrypt_opt::memory::MaybeHugeSlice::<
-        Align64<scrypt_opt::Block<R>>,
-    >::new(required_blocks * num_threads * 2);
-    let full_slice = Arc::new(full_slice);
-    if let Some(e) = huge_page_error {
-        eprintln!("WARNING: failed to allocate huge page: {}", e);
-    }
+    let mut full_slice = MultiThreadedHugeSlice::<Align64<scrypt_opt::Block<R>>>::new(
+        if Pipeline::BOOL {
+            required_blocks * 2
+        } else {
+            required_blocks
+        },
+        num_threads,
+    );
 
     #[cfg(feature = "core_affinity")]
     let mut core_assigner = CoreAffinityAssigner::new(core_stride);
 
-    for thread_idx in 0..num_threads {
-        #[cfg(feature = "core_affinity")]
-        let core = core_assigner.next();
-
-        let mut counter = Arc::clone(&counter);
-        let slice = Arc::clone(&full_slice);
-
-        std::thread::spawn(move || {
+    std::thread::scope(|s| {
+        for (thread_idx, mut local_buffer) in full_slice.get().into_iter().enumerate() {
             #[cfg(feature = "core_affinity")]
-            if let Some(core) = core {
-                if !core_affinity::set_for_current(core) {
-                    eprintln!("Failed to set core affinity for thread {}", thread_idx);
-                }
-            }
+            let core = core_assigner.next();
 
-            let mut buffers0 =
-                scrypt_opt::BufferSet::<&mut [Align64<scrypt_opt::Block<R>>], R>::new(unsafe {
-                    core::slice::from_raw_parts_mut(
-                        slice
-                            .as_ptr()
-                            .add(thread_idx * 2 * required_blocks)
-                            .cast_mut(),
-                        required_blocks,
-                    )
-                });
+            let mut counter = &counter;
 
-            if !Pipeline::BOOL {
-                let mut password = KAT_PASSWORD;
-                let hmac_state = Pbkdf2HmacSha256State::new(&password);
-                let mut output = [0u8; KAT_EXPECTED.len()];
-                for i in 0u64.. {
-                    password[..8].copy_from_slice(&i.to_le_bytes());
-                    buffers0.set_input(&hmac_state, KAT_SALT);
-                    buffers0.scrypt_ro_mix();
-                    buffers0.extract_output(&hmac_state, &mut output);
-                    counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                }
-
-                return;
-            }
-
-            let mut buffers1 =
-                scrypt_opt::BufferSet::<&mut [Align64<scrypt_opt::Block<R>>], R>::new(unsafe {
-                    core::slice::from_raw_parts_mut(
-                        slice
-                            .as_ptr()
-                            .add((thread_idx * 2 + 1) * required_blocks)
-                            .cast_mut(),
-                        required_blocks,
-                    )
-                });
-
-            struct Context {
-                hmac_state: Pbkdf2HmacSha256State,
-            }
-
-            impl Context {
-                #[inline(always)]
-                fn new(i: u64) -> Self {
-                    let mut password = KAT_PASSWORD;
-                    if i >= 3 {
-                        password[..8].copy_from_slice(&i.to_le_bytes());
-                        password[8] = 0;
+            std::thread::Builder::new()
+                .name(format!("throughput-worker-{}", thread_idx))
+                .spawn_scoped(s, move || {
+                    #[cfg(feature = "core_affinity")]
+                    if let Some(core) = core {
+                        if !core_affinity::set_for_current(core) {
+                            eprintln!("Failed to set core affinity for thread {}", thread_idx);
+                        }
                     }
-                    Self {
-                        hmac_state: Pbkdf2HmacSha256State::new(&password),
+
+                    let (buffer0_inner, buffer1_inner) =
+                        local_buffer.as_mut().split_at_mut(required_blocks);
+
+                    let mut buffers0 = scrypt_opt::BufferSet::<
+                        &mut [Align64<scrypt_opt::Block<R>>],
+                        R,
+                    >::new(buffer0_inner);
+
+                    if !Pipeline::BOOL {
+                        let mut password = KAT_PASSWORD;
+                        let hmac_state = Pbkdf2HmacSha256State::new(&password);
+                        let mut output = [0u8; KAT_EXPECTED.len()];
+                        for i in 0u64.. {
+                            password[..8].copy_from_slice(&i.to_le_bytes());
+                            buffers0.set_input(&hmac_state, KAT_SALT);
+                            buffers0.scrypt_ro_mix();
+                            buffers0.extract_output(&hmac_state, &mut output);
+                            counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        }
+
+                        return;
                     }
-                }
-            }
 
-            impl<R: ArrayLength + NonZero>
-                PipelineContext<Arc<AtomicU64>, &mut [Align64<scrypt_opt::Block<R>>], R, ()>
-                for Context
-            {
-                #[inline(always)]
-                fn begin(
-                    &mut self,
-                    _state: &mut Arc<AtomicU64>,
-                    buffer_set: &mut scrypt_opt::BufferSet<&mut [Align64<scrypt_opt::Block<R>>], R>,
-                ) {
-                    buffer_set.set_input(&self.hmac_state, KAT_SALT);
-                }
+                    let mut buffers1 = scrypt_opt::BufferSet::<
+                        &mut [Align64<scrypt_opt::Block<R>>],
+                        R,
+                    >::new(buffer1_inner);
 
-                #[inline(always)]
-                fn drain(
-                    self,
-                    counter: &mut Arc<AtomicU64>,
-                    buffer_set: &mut scrypt_opt::BufferSet<&mut [Align64<scrypt_opt::Block<R>>], R>,
-                ) -> Option<()> {
-                    let mut output = [0u8; KAT_EXPECTED.len()];
-                    buffer_set.extract_output(&self.hmac_state, &mut output);
-                    core::hint::black_box(output);
+                    struct Context {
+                        hmac_state: Pbkdf2HmacSha256State,
+                    }
 
-                    counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    impl Context {
+                        #[inline(always)]
+                        fn new(i: u64) -> Self {
+                            let mut password = KAT_PASSWORD;
+                            if i >= 3 {
+                                password[..8].copy_from_slice(&i.to_le_bytes());
+                                password[8] = 0;
+                            }
+                            Self {
+                                hmac_state: Pbkdf2HmacSha256State::new(&password),
+                            }
+                        }
+                    }
 
-                    None
-                }
-            }
+                    impl<R: ArrayLength + NonZero>
+                        PipelineContext<&AtomicU64, &mut [Align64<scrypt_opt::Block<R>>], R, ()>
+                        for Context
+                    {
+                        #[inline(always)]
+                        fn begin(
+                            &mut self,
+                            _state: &mut &AtomicU64,
+                            buffer_set: &mut scrypt_opt::BufferSet<
+                                &mut [Align64<scrypt_opt::Block<R>>],
+                                R,
+                            >,
+                        ) {
+                            buffer_set.set_input(&self.hmac_state, KAT_SALT);
+                        }
 
-            buffers0.pipeline(&mut buffers1, (0..).map(|i| Context::new(i)), &mut counter);
-        });
-    }
+                        #[inline(always)]
+                        fn drain(
+                            self,
+                            counter: &mut &AtomicU64,
+                            buffer_set: &mut scrypt_opt::BufferSet<
+                                &mut [Align64<scrypt_opt::Block<R>>],
+                                R,
+                            >,
+                        ) -> Option<()> {
+                            let mut output = [0u8; KAT_EXPECTED.len()];
+                            buffer_set.extract_output(&self.hmac_state, &mut output);
+                            core::hint::black_box(output);
 
-    println!(
-        "Started {} threads (N={}, R={}, P=1)",
-        num_threads,
-        1u64 << cf.get(),
-        R::USIZE
-    );
+                            counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
-    let mut prev = counter.load(std::sync::atomic::Ordering::Relaxed);
-    loop {
-        std::thread::sleep(std::time::Duration::from_millis(1000));
-        let cur = counter.load(std::sync::atomic::Ordering::Relaxed);
-        println!("Thrpt: {} c/s (total: {})", cur - prev, cur);
-        prev = cur;
-    }
+                            None
+                        }
+                    }
+
+                    buffers0.pipeline(&mut buffers1, (0..).map(|i| Context::new(i)), &mut counter);
+                })
+                .expect("failed to spawn thread");
+        }
+
+        println!(
+            "Started {} threads (N={}, R={}, P=1)",
+            num_threads,
+            1u64 << cf.get(),
+            R::USIZE
+        );
+
+        let mut prev = counter.load(std::sync::atomic::Ordering::Relaxed);
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(1000));
+            let cur = counter.load(std::sync::atomic::Ordering::Relaxed);
+            println!("Thrpt: {} c/s (total: {})", cur - prev, cur);
+            prev = cur;
+        }
+    });
 }
 
 fn main() {
