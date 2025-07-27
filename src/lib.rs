@@ -424,6 +424,21 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
         let n = 1 << length_to_cf(v.len());
         // at least n+1 long, this is already enforced by length_to_cf so we can disable it for release builds
         debug_assert!(v.len() > n, "pipeline_start_ex: v.len() < n");
+
+        unsafe {
+            v.get_unchecked_mut(0)
+                .chunks_exact_mut(16)
+                .for_each(|chunk| {
+                    S::shuffle_in(
+                        chunk
+                            .as_mut_ptr()
+                            .cast::<Align64<[u32; 16]>>()
+                            .as_mut()
+                            .unwrap(),
+                    );
+                });
+        }
+
         for i in 0..n {
             let [src, dst] = unsafe { v.get_disjoint_unchecked_mut([i, i + 1]) };
             scrypt_block_mix::<R, S, _, _>(&*src, dst);
@@ -462,6 +477,20 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
             let [b, v, t] = unsafe { v.get_disjoint_unchecked_mut([n, j2, n + 1]) };
             scrypt_block_mix::<R, S, _, _>((&*v, &*t), b);
         }
+
+        unsafe {
+            v.get_unchecked_mut(n)
+                .chunks_exact_mut(16)
+                .for_each(|chunk| {
+                    S::shuffle_out(
+                        chunk
+                            .as_mut_ptr()
+                            .cast::<Align64<[u32; 16]>>()
+                            .as_mut()
+                            .unwrap(),
+                    );
+                });
+        }
     }
 
     /// Drain an interleaved pipeline using the default engine by performing the $RoMix_{Back}$ operation.
@@ -492,6 +521,22 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
             other_v.len() >= n + 2,
             "scrypt_ro_mix_interleaved_ex: other_v.len() < n + 2"
         );
+
+        // SAFETY: other_v is always 64-byte aligned
+        unsafe {
+            other_v
+                .get_unchecked_mut(0)
+                .chunks_exact_mut(16)
+                .for_each(|chunk| {
+                    S::shuffle_in(
+                        chunk
+                            .as_mut_ptr()
+                            .cast::<Align64<[u32; 16]>>()
+                            .as_mut()
+                            .unwrap_unchecked(),
+                    );
+                });
+        }
 
         for i in (0..n).step_by(2) {
             // SAFETY: the largest i value is n-1, so the largest index is n+1, which is in bounds after the >=n+2 check
@@ -530,6 +575,22 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
                     self_b,
                 );
             }
+        }
+
+        // SAFETY: self_v is always 64-byte aligned
+        unsafe {
+            self_v
+                .get_unchecked_mut(n)
+                .chunks_exact_mut(16)
+                .for_each(|chunk| {
+                    S::shuffle_out(
+                        chunk
+                            .as_mut_ptr()
+                            .cast::<Align64<[u32; 16]>>()
+                            .as_mut()
+                            .unwrap_unchecked(),
+                    );
+                });
         }
     }
 
@@ -612,6 +673,20 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
         // at least n+1 long, this is checked by length_to_cf
         debug_assert!(v.len() > n, "scrypt_ro_mix_ex_zmm: v.len() <= n");
 
+        unsafe {
+            v.get_unchecked_mut(0)
+                .chunks_exact_mut(16)
+                .for_each(|chunk| {
+                    S::shuffle_in(
+                        chunk
+                            .as_mut_ptr()
+                            .cast::<Align64<[u32; 16]>>()
+                            .as_mut()
+                            .unwrap(),
+                    );
+                });
+        }
+
         let mut input_b = InRegisterAdapter::<R>::new();
         for i in 0..(n - 1) {
             let [src, dst] = unsafe { v.get_disjoint_unchecked_mut([i, i + 1]) };
@@ -641,6 +716,20 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
 
         // SAFETY: n is in bounds after the >=n+1 check
         input_b.write_back(unsafe { v.get_unchecked_mut(n) });
+
+        unsafe {
+            v.get_unchecked_mut(n)
+                .chunks_exact_mut(16)
+                .for_each(|chunk| {
+                    S::shuffle_out(
+                        chunk
+                            .as_mut_ptr()
+                            .cast::<Align64<[u32; 16]>>()
+                            .as_mut()
+                            .unwrap(),
+                    );
+                });
+        }
     }
 
     /// Perform a paired-halves RoMix operation with interleaved buffers using AVX-512 registers as temporary storage for the latter (this) half pipeline.
@@ -683,6 +772,21 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
             self_v.len() >= n + 1,
             "scrypt_ro_mix_interleaved_ex_zmm: self.v.len() < n + 1"
         );
+
+        unsafe {
+            other_v
+                .get_unchecked_mut(0)
+                .chunks_exact_mut(16)
+                .for_each(|chunk| {
+                    S::shuffle_in(
+                        chunk
+                            .as_mut_ptr()
+                            .cast::<Align64<[u32; 16]>>()
+                            .as_mut()
+                            .unwrap(),
+                    );
+                });
+        }
 
         let mut idx = unsafe { self_v.get_unchecked(n)[Mul32::<R>::USIZE - 16] as usize };
         idx = idx & (n - 1);
@@ -740,6 +844,21 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
         }
 
         input_b.write_back(unsafe { self_v.get_unchecked_mut(n) });
+
+        unsafe {
+            self_v
+                .get_unchecked_mut(n)
+                .chunks_exact_mut(16)
+                .for_each(|chunk| {
+                    S::shuffle_out(
+                        chunk
+                            .as_mut_ptr()
+                            .cast::<Align64<[u32; 16]>>()
+                            .as_mut()
+                            .unwrap(),
+                    );
+                });
+        }
     }
 }
 

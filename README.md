@@ -134,6 +134,10 @@ Differences are computed against a native JtR build with AVX512VL enabled.
 | RS 4000 G11   | 12      | scrypt-opt  | 16384 (14)  | 8   | 740              |
 | RS 4000 G11   | 12      | scrypt-opt  | 16384 (14)  | 16  | 414              |
 | RS 4000 G11   | 12      | scrypt-opt  | 32768 (15)  | 8   | 355              |
+| E32sv6        | 64      | scrypt-opt  | 16384 (14)  | 8   | 2311             |
+| E32sv6        | 64      | scrypt-opt  | 16384 (15)  | 8   | 1143             |
+| E32sv6        | 64      | scrypt-opt  | 16384 (14)  | 16  | 1201             |
+| E32sv6        | 64      | scrypt-opt  | 16384 (17)  | 8   | 281              |
 
 ### Browser WASM Comparison
 

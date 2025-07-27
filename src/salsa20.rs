@@ -1,19 +1,6 @@
-#![cfg_attr(
-    any(
-        all(
-            target_arch = "x86_64",
-            target_feature = "avx512f",
-            feature = "portable-simd"
-        ),
-        all(
-            not(feature = "portable-simd"),
-            not(all(target_arch = "x86_64", target_feature = "avx512f"))
-        )
-    ),
-    allow(
-        unused,
-        reason = "APIs that allow switching cores in code are not exposed to the public API, yet"
-    )
+#![allow(
+    unused,
+    reason = "APIs that allow switching cores in code are not exposed to the public API, yet"
 )]
 
 #[cfg(target_arch = "x86_64")]
@@ -271,6 +258,12 @@ pub(crate) trait Salsa20 {
     /// The block type
     type Block: BlockType;
 
+    /// Shuffle data into optimal representation
+    fn shuffle_in(_ptr: &mut Align64<[u32; 16]>) {}
+
+    /// Shuffle data out of optimal representation
+    fn shuffle_out(_ptr: &mut Align64<[u32; 16]>) {}
+
     /// Read block(s)
     fn read(ptr: GenericArray<&Self::Block, Self::Lanes>) -> Self;
     /// Write block(s) back
@@ -364,9 +357,9 @@ impl Salsa20 for BlockAvx512F {
             *ptr[0] = _mm512_add_epi32(
                 *ptr[0],
                 _mm512_permutex2var_epi32(
-                    _mm512_zextsi256_si512(_mm256_setr_m128i(self.a, self.b)),
+                    _mm512_castsi256_si512(_mm256_setr_m128i(self.a, self.b)),
                     ConcatLo::<_, Compose<_, RoundShuffleAbcd, Inverse<_, Pivot>>>::INDEX_ZMM,
-                    _mm512_zextsi256_si512(_mm256_setr_m128i(self.c, self.d)),
+                    _mm512_castsi256_si512(_mm256_setr_m128i(self.c, self.d)),
                 ),
             );
         }
@@ -464,8 +457,8 @@ impl Salsa20 for BlockAvx512F2 {
     #[inline(always)]
     fn write(&self, mut ptr: GenericArray<&mut Self::Block, U2>) {
         unsafe {
-            let a0a1b0b1 = _mm512_inserti64x4(_mm512_zextsi256_si512(self.a), self.b, 1);
-            let c0c1d0d1 = _mm512_inserti64x4(_mm512_zextsi256_si512(self.c), self.d, 1);
+            let a0a1b0b1 = _mm512_inserti64x4(_mm512_castsi256_si512(self.a), self.b, 1);
+            let c0c1d0d1 = _mm512_inserti64x4(_mm512_castsi256_si512(self.c), self.d, 1);
 
             let buf0_output =
                 _mm512_permutex2var_epi32(
@@ -558,41 +551,46 @@ impl Salsa20 for BlockPortableSimd {
     type Block = u32x16;
 
     #[inline(always)]
-    fn read(ptr: GenericArray<&Self::Block, U1>) -> Self {
-        let pivoted = Pivot::swizzle(*ptr[0]);
+    fn shuffle_in(ptr: &mut Align64<[u32; 16]>) {
+        let pivoted = Pivot::swizzle(u32x16::from_array(ptr.0));
+        ptr.0 = *pivoted.as_array();
+    }
 
-        let a = pivoted.extract::<0, 4>();
-        let b = pivoted.extract::<4, 4>();
-        let c = pivoted.extract::<8, 4>();
-        let d = pivoted.extract::<12, 4>();
+    #[inline(always)]
+    fn shuffle_out(ptr: &mut Align64<[u32; 16]>) {
+        let pivoted = Inverse::<_, Pivot>::swizzle(u32x16::from_array(ptr.0));
+        ptr.0 = *pivoted.as_array();
+    }
+
+    #[inline(always)]
+    fn read(ptr: GenericArray<&Self::Block, U1>) -> Self {
+        let a = ptr[0].extract::<0, 4>();
+        let b = ptr[0].extract::<4, 4>();
+        let c = ptr[0].extract::<8, 4>();
+        let d = ptr[0].extract::<12, 4>();
 
         Self { a, b, c, d }
     }
 
     #[inline(always)]
     fn write(&self, mut ptr: GenericArray<&mut Self::Block, U1>) {
-        use crate::simd::{Identity, Inverse};
+        use crate::simd::Identity;
 
         // straighten vectors
         let ab = Identity::<8>::concat_swizzle(self.a, self.b);
         let cd = Identity::<8>::concat_swizzle(self.c, self.d);
         let abcd = Identity::<16>::concat_swizzle(ab, cd);
 
-        *ptr[0] += Compose::<_, RoundShuffleAbcd, Inverse<_, Pivot>>::swizzle(abcd);
+        *ptr[0] += abcd;
     }
 
     #[inline(always)]
     fn keystream<const ROUND_PAIRS: usize>(&mut self) {
         if ROUND_PAIRS == 0 {
-            let newd = self.b.rotate_elements_right::<1>();
-            self.c = self.c.rotate_elements_right::<2>();
-            self.b = self.d.rotate_elements_right::<3>();
-            self.d = newd;
-
             return;
         }
 
-        for _ in 0..(ROUND_PAIRS * 2 - 1) {
+        for _ in 0..(ROUND_PAIRS * 2) {
             self.b ^= simd_rotate_left::<_, 7>(self.a + self.d);
             self.c ^= simd_rotate_left::<_, 9>(self.b + self.a);
             self.d ^= simd_rotate_left::<_, 13>(self.c + self.b);
@@ -603,11 +601,6 @@ impl Salsa20 for BlockPortableSimd {
             self.d = self.b.rotate_elements_left::<3>();
             self.b = newb;
         }
-
-        self.b ^= simd_rotate_left::<_, 7>(self.a + self.d);
-        self.c ^= simd_rotate_left::<_, 9>(self.b + self.a);
-        self.d ^= simd_rotate_left::<_, 13>(self.c + self.b);
-        self.a ^= simd_rotate_left::<_, 18>(self.d + self.c);
     }
 }
 
@@ -626,53 +619,53 @@ impl Salsa20 for BlockPortableSimd2 {
     type Block = u32x16;
 
     #[inline(always)]
-    fn read(ptr: GenericArray<&Self::Block, U2>) -> Self {
-        let aabb = Pivot2Ab::concat_swizzle(*ptr[0], *ptr[1]);
-        let ccdd = FlipTable16::<Pivot2Cd>::concat_swizzle(*ptr[1], *ptr[0]);
+    fn shuffle_in(ptr: &mut Align64<[u32; 16]>) {
+        BlockPortableSimd::shuffle_in(ptr);
+    }
 
-        let a = aabb.extract::<0, 8>();
-        let b = aabb.extract::<8, 8>();
-        let c = ccdd.extract::<0, 8>();
-        let d = ccdd.extract::<8, 8>();
+    #[inline(always)]
+    fn shuffle_out(ptr: &mut Align64<[u32; 16]>) {
+        BlockPortableSimd::shuffle_out(ptr);
+    }
+
+    #[inline(always)]
+    fn read(ptr: GenericArray<&Self::Block, U2>) -> Self {
+        let buffer0_ab = core::simd::simd_swizzle!(*ptr[0], [0, 1, 2, 3, 4, 5, 6, 7]);
+        let buffer0_cd = core::simd::simd_swizzle!(*ptr[0], [8, 9, 10, 11, 12, 13, 14, 15]);
+        let buffer1_ab = core::simd::simd_swizzle!(*ptr[1], [0, 1, 2, 3, 4, 5, 6, 7]);
+        let buffer1_cd = core::simd::simd_swizzle!(*ptr[1], [8, 9, 10, 11, 12, 13, 14, 15]);
+
+        let a = core::simd::simd_swizzle!(buffer0_ab, buffer1_ab, [0, 1, 2, 3, 8, 9, 10, 11]);
+        let b = core::simd::simd_swizzle!(buffer0_ab, buffer1_ab, [4, 5, 6, 7, 12, 13, 14, 15]);
+        let c = core::simd::simd_swizzle!(buffer0_cd, buffer1_cd, [0, 1, 2, 3, 8, 9, 10, 11]);
+        let d = core::simd::simd_swizzle!(buffer0_cd, buffer1_cd, [4, 5, 6, 7, 12, 13, 14, 15]);
 
         Self { a, b, c, d }
     }
 
     #[inline(always)]
     fn write(&self, mut ptr: GenericArray<&mut Self::Block, U2>) {
-        use crate::simd::Inverse;
+        use crate::simd::Identity;
 
         // pick out elements from each buffer
-        //
-        // this shuffle automatically gets combined on 512-bit platforms
-        // we will try to keep them in 128-bit lanes as much as possible
-        // so that it does not explode on platforms with only narrow SIMD
-        // the vast majority of 512-bit platforms is AVX512F which uses the dedicated
-        // this shuffle automatically gets combined on 512-bit platforms
+        // this shuffle automatically gets composed by LLVM
+
         let a0b0 = core::simd::simd_swizzle!(self.a, self.b, [0, 1, 2, 3, 8, 9, 10, 11]);
         let a1b1 = core::simd::simd_swizzle!(self.a, self.b, [4, 5, 6, 7, 12, 13, 14, 15]);
         let c0d0 = core::simd::simd_swizzle!(self.c, self.d, [0, 1, 2, 3, 8, 9, 10, 11]);
         let c1d1 = core::simd::simd_swizzle!(self.c, self.d, [4, 5, 6, 7, 12, 13, 14, 15]);
 
-        let abcd = Compose::<_, RoundShuffleAbcd, Inverse<_, Pivot>>::concat_swizzle(a0b0, c0d0);
-        let abcd1 = Compose::<_, RoundShuffleAbcd, Inverse<_, Pivot>>::concat_swizzle(a1b1, c1d1);
-
-        *ptr[0] += abcd;
-        *ptr[1] += abcd1;
+        *ptr[0] += Identity::<16>::concat_swizzle(a0b0, c0d0);
+        *ptr[1] += Identity::<16>::concat_swizzle(a1b1, c1d1);
     }
 
     #[inline(always)]
     fn keystream<const ROUND_PAIRS: usize>(&mut self) {
         if ROUND_PAIRS == 0 {
-            let newd = core::simd::simd_swizzle!(self.b, [3, 0, 1, 2, 7, 4, 5, 6]);
-            self.c = core::simd::simd_swizzle!(self.c, [2, 3, 0, 1, 6, 7, 4, 5]);
-            self.b = core::simd::simd_swizzle!(self.d, [1, 2, 3, 0, 5, 6, 7, 4]);
-            self.d = newd;
-
             return;
         }
 
-        for _ in 0..(ROUND_PAIRS * 2 - 1) {
+        for _ in 0..(ROUND_PAIRS * 2) {
             self.b ^= simd_rotate_left::<_, 7>(self.a + self.d);
             self.c ^= simd_rotate_left::<_, 9>(self.b + self.a);
             self.d ^= simd_rotate_left::<_, 13>(self.c + self.b);
@@ -683,11 +676,6 @@ impl Salsa20 for BlockPortableSimd2 {
             self.d = core::simd::simd_swizzle!(self.b, [3, 0, 1, 2, 7, 4, 5, 6]);
             self.b = newb;
         }
-
-        self.b ^= simd_rotate_left::<_, 7>(self.a + self.d);
-        self.c ^= simd_rotate_left::<_, 9>(self.b + self.a);
-        self.d ^= simd_rotate_left::<_, 13>(self.c + self.b);
-        self.a ^= simd_rotate_left::<_, 18>(self.d + self.c);
     }
 }
 
@@ -698,8 +686,33 @@ mod tests {
 
     use super::*;
 
+    fn test_shuffle_in_out_identity<S: Salsa20>()
+    where
+        S::Block: BlockType,
+    {
+        fn lfsr(x: &mut u32) -> u32 {
+            *x = *x ^ (*x >> 2);
+            *x = *x ^ (*x >> 3);
+            *x = *x ^ (*x >> 5);
+            *x
+        }
+
+        let mut state = 0;
+
+        for _ in 0..5 {
+            let test_input = Align64(core::array::from_fn(|i| lfsr(&mut state) + i as u32));
+
+            let mut result = test_input.clone();
+            S::shuffle_in(&mut result);
+            S::shuffle_out(&mut result);
+            assert_eq!(result, test_input);
+        }
+    }
+
     #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
     fn test_keystream<const ROUND_PAIRS: usize>() {
+        test_shuffle_in_out_identity::<BlockAvx512F>();
+
         let test_input: Align64<[u32; 16]> = Align64(core::array::from_fn(|i| i as u32));
         let mut expected = test_input.clone();
 
@@ -707,22 +720,26 @@ mod tests {
         block.keystream::<ROUND_PAIRS>();
         block.write(GenericArray::from_array([&mut expected]));
 
-        let mut result = unsafe { _mm512_load_si512(test_input.as_ptr().cast::<__m512i>()) };
-
+        let mut core_input = test_input.clone();
+        BlockAvx512F::shuffle_in(&mut core_input);
+        let mut result = unsafe { _mm512_load_si512(core_input.as_ptr().cast::<__m512i>()) };
         let mut block_v = BlockAvx512F::read(GenericArray::from_array([&result]));
         block_v.keystream::<ROUND_PAIRS>();
         block_v.write(GenericArray::from_array([&mut result]));
 
-        let mut output = [0u32; 16];
+        let mut output = Align64([0u32; 16]);
         unsafe {
-            _mm512_storeu_si512(output.as_mut_ptr().cast::<__m512i>(), result);
+            _mm512_store_si512(output.as_mut_ptr().cast::<__m512i>(), result);
         }
+        BlockAvx512F::shuffle_out(&mut output);
 
-        assert_eq!(output, *expected);
+        assert_eq!(output, expected);
     }
 
     #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
     fn test_keystream_mb2<const ROUND_PAIRS: usize>() {
+        test_shuffle_in_out_identity::<BlockAvx512F2>();
+
         let test_input0: Align64<[u32; 16]> = Align64(core::array::from_fn(|i| i as u32));
         let test_input1: Align64<[u32; 16]> = Align64(core::array::from_fn(|i| i as u32 + 16));
         let mut expected0 = test_input0.clone();
@@ -735,8 +752,15 @@ mod tests {
         block0.write(GenericArray::from_array([&mut expected0]));
         block1.write(GenericArray::from_array([&mut expected1]));
 
-        let mut test_input0 = unsafe { _mm512_load_si512(test_input0.as_ptr().cast::<__m512i>()) };
-        let mut test_input1 = unsafe { _mm512_load_si512(test_input1.as_ptr().cast::<__m512i>()) };
+        let mut test_input0_shuffled = test_input0.clone();
+        let mut test_input1_shuffled = test_input1.clone();
+        BlockAvx512F2::shuffle_in(&mut test_input0_shuffled);
+        BlockAvx512F2::shuffle_in(&mut test_input1_shuffled);
+
+        let mut test_input0 =
+            unsafe { _mm512_load_si512(test_input0_shuffled.as_ptr().cast::<__m512i>()) };
+        let mut test_input1 =
+            unsafe { _mm512_load_si512(test_input1_shuffled.as_ptr().cast::<__m512i>()) };
 
         let mut block_v0 =
             BlockAvx512F2::read(GenericArray::from_array([&test_input0, &test_input1]));
@@ -746,40 +770,51 @@ mod tests {
             &mut test_input1,
         ]));
 
-        let mut result0 = [0u32; 16];
-        let mut result1 = [0u32; 16];
+        let mut result0 = Align64([0u32; 16]);
+        let mut result1 = Align64([0u32; 16]);
 
         unsafe {
-            _mm512_storeu_si512(result0.as_mut_ptr().cast::<__m512i>(), test_input0);
-            _mm512_storeu_si512(result1.as_mut_ptr().cast::<__m512i>(), test_input1);
+            _mm512_store_si512(result0.as_mut_ptr().cast::<__m512i>(), test_input0);
+            _mm512_store_si512(result1.as_mut_ptr().cast::<__m512i>(), test_input1);
         }
 
-        assert_eq!(result0, *expected0);
-        assert_eq!(result1, *expected1);
+        BlockAvx512F2::shuffle_out(&mut result0);
+        BlockAvx512F2::shuffle_out(&mut result1);
+
+        assert_eq!(result0, expected0);
+        assert_eq!(result1, expected1);
     }
 
     #[cfg(feature = "portable-simd")]
     fn test_keystream_portable_simd<const ROUND_PAIRS: usize>() {
+        test_shuffle_in_out_identity::<BlockPortableSimd>();
+
         let test_input: Align64<[u32; 16]> = Align64(core::array::from_fn(|i| i as u32));
         let mut expected = test_input.clone();
 
-        let mut block = BlockScalar::<U1>::read(GenericArray::from_array([&test_input]));
+        let mut block = BlockScalar::<U1>::read(GenericArray::from_array([&expected]));
         block.keystream::<ROUND_PAIRS>();
         block.write(GenericArray::from_array([&mut expected]));
 
-        let mut result = u32x16::from_array(*test_input);
+        let mut test_input_shuffled = test_input.clone();
+
+        BlockPortableSimd::shuffle_in(&mut test_input_shuffled);
+        let mut result = u32x16::from_array(*test_input_shuffled);
 
         let mut block_v = BlockPortableSimd::read(GenericArray::from_array([&result]));
         block_v.keystream::<ROUND_PAIRS>();
         block_v.write(GenericArray::from_array([&mut result]));
 
-        let output = result.to_array();
+        let mut output = Align64(result.to_array());
+        BlockPortableSimd::shuffle_out(&mut output);
 
-        assert_eq!(output, *expected);
+        assert_eq!(output, expected);
     }
 
     #[cfg(feature = "portable-simd")]
     fn test_keystream_portable_simd2<const ROUND_PAIRS: usize>() {
+        test_shuffle_in_out_identity::<BlockPortableSimd2>();
+
         let test_input0: Align64<[u32; 16]> = Align64(core::array::from_fn(|i| i as u32));
         let test_input1: Align64<[u32; 16]> = Align64(core::array::from_fn(|i| i as u32 + 16));
         let mut expected0 = test_input0.clone();
@@ -792,18 +827,26 @@ mod tests {
         block0.write(GenericArray::from_array([&mut expected0]));
         block1.write(GenericArray::from_array([&mut expected1]));
 
-        let mut result0 = u32x16::from_array(*test_input0);
-        let mut result1 = u32x16::from_array(*test_input1);
+        let mut test_input0_shuffled = test_input0.clone();
+        let mut test_input1_shuffled = test_input1.clone();
+        BlockPortableSimd2::shuffle_in(&mut test_input0_shuffled);
+        BlockPortableSimd2::shuffle_in(&mut test_input1_shuffled);
+
+        let mut result0 = u32x16::from_array(*test_input0_shuffled);
+        let mut result1 = u32x16::from_array(*test_input1_shuffled);
 
         let mut block_v0 = BlockPortableSimd2::read(GenericArray::from_array([&result0, &result1]));
         block_v0.keystream::<ROUND_PAIRS>();
         block_v0.write(GenericArray::from_array([&mut result0, &mut result1]));
 
-        let output0 = result0.to_array();
-        let output1 = result1.to_array();
+        let mut output0 = Align64(result0.to_array());
+        let mut output1 = Align64(result1.to_array());
 
-        assert_eq!(output0, *expected0);
-        assert_eq!(output1, *expected1);
+        BlockPortableSimd2::shuffle_out(&mut output0);
+        BlockPortableSimd2::shuffle_out(&mut output1);
+
+        assert_eq!(output0, expected0);
+        assert_eq!(output1, expected1);
     }
 
     #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
