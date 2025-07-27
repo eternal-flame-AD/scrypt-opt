@@ -107,8 +107,7 @@ fn bench_scrypt(c: &mut Criterion) {
         });
 
         group.bench_function(format!("{}/8/1_rustcrypto", 1u32 << cf.get()), |b| {
-            let params =
-                scrypt::Params::new(cf.get().trailing_zeros() as u8, R::U32, 1, 64).unwrap();
+            let params = scrypt::Params::new(cf.try_into().unwrap(), R::U32, 1, 64).unwrap();
             b.iter_batched(
                 || {
                     let mut input = [0u8; 12];

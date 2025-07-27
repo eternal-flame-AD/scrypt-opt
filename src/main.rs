@@ -142,9 +142,6 @@ struct Args {
     command: Command,
 }
 
-#[cfg(all(target_os = "linux", feature = "huge-page"))]
-const HUGE_PAGE_ENVIRON_NAME: &str = "HUGETLBFS_MOUNT_POINT";
-
 const KAT_PASSWORD: [u8; 13] = *b"pleaseletmein";
 const KAT_SALT: &[u8] = b"SodiumChloride";
 const KAT_EXPECTED: [u8; 64] = [
@@ -165,9 +162,6 @@ struct MultiThreadedHugeSlice<T> {
     len_per_thread: usize,
     num_threads: NonZeroU32,
     inner: scrypt_opt::memory::MaybeHugeSlice<T>,
-    // important: this must be dropped after the inner is dropped
-    #[cfg(target_os = "linux")]
-    _hugetlb_file: Option<tempfile::NamedTempFile>,
     _marker: PhantomData<T>,
 }
 
@@ -178,70 +172,8 @@ impl<T> MultiThreadedHugeSlice<T> {
                 len_per_thread,
                 num_threads,
                 inner: scrypt_opt::memory::MaybeHugeSlice::new_slice_zeroed(0),
-                #[cfg(target_os = "linux")]
-                _hugetlb_file: None,
                 _marker: PhantomData,
             };
-        }
-
-        // handle HugeTLBFS backed allocation
-        #[cfg(all(target_os = "linux", feature = "huge-page"))]
-        {
-            if let Ok(dir) = std::env::var(HUGE_PAGE_ENVIRON_NAME) {
-                let file =
-                    tempfile::NamedTempFile::new_in(dir).expect("failed to create huge page file");
-
-                let dupped = file.reopen().expect("failed to reopen huge page file");
-
-                let inner = scrypt_opt::memory::MaybeHugeSlice::new_in(
-                    len_per_thread
-                        .checked_mul(num_threads.get() as usize)
-                        .expect("size overflow"),
-                    dupped,
-                )
-                .expect("failed to create huge page");
-
-                eprintln!("HugeTLBFS backed allocation successful");
-
-                return Self {
-                    len_per_thread,
-                    num_threads,
-                    inner,
-                    #[cfg(target_os = "linux")]
-                    _hugetlb_file: Some(file),
-                    _marker: PhantomData,
-                };
-            }
-
-            // if /dev/hugepages exists, try it before trying anonymous huge pages
-            // it seems some chips (Aarch64) will fail if you ask for too big anonymous huge pages
-            if unsafe { libc::geteuid() } == 0 && std::path::Path::new("/dev/hugepages").exists() {
-                let file = tempfile::NamedTempFile::new_in("/dev/hugepages")
-                    .expect("failed to create huge page file");
-
-                let dupped = file.reopen().expect("failed to reopen huge page file");
-                match scrypt_opt::memory::MaybeHugeSlice::new_in(
-                    len_per_thread
-                        .checked_mul(num_threads.get() as usize)
-                        .expect("size overflow"),
-                    dupped,
-                ) {
-                    Ok(inner) => {
-                        eprintln!("HugeTLBFS backed allocation successful");
-                        return Self {
-                            len_per_thread,
-                            num_threads,
-                            inner,
-                            #[cfg(target_os = "linux")]
-                            _hugetlb_file: Some(file),
-                            _marker: PhantomData,
-                        };
-                    }
-                    Err(error) => {
-                        eprintln!("Failed to allocate HugeTLBFS backed huge page: {}", error);
-                    }
-                }
-            }
         }
 
         let (inner, error) = scrypt_opt::memory::MaybeHugeSlice::new(
@@ -260,8 +192,6 @@ impl<T> MultiThreadedHugeSlice<T> {
             len_per_thread,
             num_threads,
             inner,
-            #[cfg(target_os = "linux")]
-            _hugetlb_file: None,
             _marker: PhantomData,
         }
     }
