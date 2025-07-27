@@ -111,6 +111,8 @@ impl<T> DerefMut for Align64<T> {
 /// A box for a hugepage-backed buffer
 #[cfg(feature = "huge-page")]
 pub struct HugeSlice<T> {
+    #[cfg(all(target_os = "linux", feature = "std"))]
+    file: Option<std::fs::File>,
     ptr: *mut T,
     len: usize,
     #[cfg(any(target_os = "android", target_os = "linux"))]
@@ -242,6 +244,19 @@ impl<T> HugeSlice<T> {
     /// Create a new hugepage-backed buffer
     #[cfg(any(target_os = "android", target_os = "linux"))]
     pub fn new(len: usize) -> Result<Self, std::io::Error> {
+        Self::new_unix(
+            len,
+            #[cfg(all(target_os = "linux", feature = "std"))]
+            None,
+        )
+    }
+
+    /// Create a new hugepage-backed buffer backed by a file
+    #[cfg(any(target_os = "android", target_os = "linux"))]
+    pub fn new_unix(
+        len: usize,
+        #[cfg(all(target_os = "linux", feature = "std"))] file: Option<std::fs::File>,
+    ) -> Result<Self, std::io::Error> {
         unsafe {
             let pagesz = libc::sysconf(libc::_SC_PAGESIZE);
             if pagesz == -1 {
@@ -270,16 +285,39 @@ impl<T> HugeSlice<T> {
                 ));
             }
 
+            #[cfg(all(target_os = "linux", feature = "std"))]
+            if let Some(file) = file {
+                let ptr = libc::mmap64(
+                    core::ptr::null_mut(),
+                    alloc_min_len,
+                    libc::PROT_READ | libc::PROT_WRITE,
+                    libc::MAP_PRIVATE | libc::MAP_HUGETLB | libc::MAP_POPULATE,
+                    std::os::unix::io::AsRawFd::as_raw_fd(&file),
+                    0,
+                );
+                if ptr != libc::MAP_FAILED {
+                    return Ok(HugeSlice {
+                        ptr: ptr.cast::<T>(),
+                        len,
+                        capacity: alloc_min_len,
+                        #[cfg(feature = "std")]
+                        file: Some(file),
+                    });
+                }
+
+                return Err(std::io::Error::last_os_error());
+            }
+
             for (try_page_size, try_flags) in [
-                #[cfg(target_os = "linux")]
+                #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
                 ((1 << 30), libc::MAP_HUGE_1GB),
-                #[cfg(target_os = "linux")]
+                #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
                 ((256 << 20), libc::MAP_HUGE_256MB),
-                #[cfg(target_os = "linux")]
+                #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
                 ((32 << 20), libc::MAP_HUGE_32MB),
-                #[cfg(target_os = "linux")]
+                #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
                 ((16 << 20), libc::MAP_HUGE_16MB),
-                #[cfg(target_os = "linux")]
+                #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
                 ((8 << 20), libc::MAP_HUGE_8MB),
                 ((page_size), 0),
             ]
@@ -306,9 +344,12 @@ impl<T> HugeSlice<T> {
                         ptr: ptr.cast::<T>(),
                         len,
                         capacity: try_size,
+                        #[cfg(feature = "std")]
+                        file: None,
                     });
                 }
             }
+
             Err(std::io::Error::last_os_error())
         }
     }
@@ -329,12 +370,14 @@ impl<T> HugeSlice<T> {
 #[cfg(feature = "huge-page")]
 impl<T> HugeSlice<core::mem::MaybeUninit<T>> {
     /// Assume the buffer is initialized
-    pub unsafe fn assume_init(self) -> HugeSlice<T> {
+    pub unsafe fn assume_init(mut self) -> HugeSlice<T> {
         HugeSlice {
             ptr: self.ptr.cast::<T>(),
             len: self.len,
             #[cfg(any(target_os = "android", target_os = "linux"))]
             capacity: self.capacity,
+            #[cfg(all(target_os = "linux", feature = "std"))]
+            file: self.file.take(),
         }
     }
 }
@@ -485,6 +528,13 @@ impl<T> MaybeHugeSlice<T> {
 
         #[cfg(not(feature = "huge-page"))]
         Self::new_slice_zeroed(len)
+    }
+
+    /// Create a new huge page-backed buffer backed by a file
+    #[cfg(all(feature = "huge-page", target_os = "linux", feature = "std"))]
+    pub fn new_in(len: usize, file: std::fs::File) -> Result<Self, std::io::Error> {
+        let huge = HugeSlice::new_unix(len, Some(file))?;
+        Ok(Self::Huge(huge))
     }
 
     /// Create a new buffer
