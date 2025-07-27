@@ -411,7 +411,6 @@ impl<T> HugeSlice<T> {
 #[cfg(feature = "huge-page")]
 impl<T> HugeSlice<core::mem::MaybeUninit<T>> {
     /// Assume the buffer is initialized
-    #[cfg_attr(not(all(target_os = "linux", feature = "std")), expect(unused_mut))]
     pub unsafe fn assume_init(self) -> HugeSlice<T> {
         let forgotten = core::mem::ManuallyDrop::new(self);
         HugeSlice {

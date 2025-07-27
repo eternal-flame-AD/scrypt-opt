@@ -29,6 +29,7 @@ fn bench_scrypt(c: &mut Criterion) {
     for cf in CFS {
         let minimum_blocks =
             scrypt_opt::BufferSet::<&mut [Align64<scrypt_opt::Block<R>>], R>::minimum_blocks(cf);
+
         group.bench_function(format!("{}/8/1", 1u32 << cf.get()), |b| {
             let mut buffers0 = scrypt_opt::BufferSet::<_, R>::new(unsafe {
                 core::slice::from_raw_parts_mut(
@@ -49,15 +50,6 @@ fn bench_scrypt(c: &mut Criterion) {
         });
 
         group.bench_function(format!("{}/8/1_interleaved", 1u32 << cf.get()), |b| {
-            let minimum_blocks =
-                scrypt_opt::BufferSet::<&mut [Align64<scrypt_opt::Block<R>>], R>::minimum_blocks(
-                    cf,
-                );
-            let mut alloc =
-                scrypt_opt::memory::MaybeHugeSlice::<Align64<scrypt_opt::Block<R>>>::new(
-                    minimum_blocks * 2,
-                )
-                .0;
             let mut buffers0 = scrypt_opt::BufferSet::<_, R>::new(unsafe {
                 core::slice::from_raw_parts_mut(alloc.as_mut().as_mut_ptr(), minimum_blocks)
             });
