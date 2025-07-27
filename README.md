@@ -1,11 +1,11 @@
 # scrypt-opt
 
-A pure-rust, permissively licensed, optimized scrypt implementation for moderate to high difficulty cases with an AVX512VL intrinsics core and a portable-simd core.
+A pure-rust, permissively licensed, optimized scrypt implementation for moderate to high difficulty cases with an AVX-512 intrinsics core and a portable-simd core.
 
 ## System Requirements
 
 - Rust 1.89+ or nightly
-- AVX512F is great (hand tuned), but at least a system with 256-bit SIMD support with the "portable-simd" feature
+- AVX512F is great (hand tuned), but at least a system with **256-bit SIMD** support with the "portable-simd" feature
 
 ## Applications
 
@@ -105,39 +105,42 @@ Memory bandwidth can be approximated as $2 \times N \times 128 \times R$ bytes/s
 
 Differences are computed against a native JtR build with AVX512VL enabled.
 
-| Host             | Threads | Program     | N (CF)      | R   | Throughput (c/s) |
-| ---------------- | ------- | ----------- | ----------- | --- | ---------------- |
-| EPYC 9334        | 64      | scrypt-opt  | 1024  (10)  | 1   | 726363           |
-| EPYC 9334        | 64      | scrypt-opt  | 4096  (12)  | 8   | 20623            |
-| EPYC 9334        | 64      | scrypt-opt  | 8192  (13)  | 8   | 9374             |
-| EPYC 9334        | 64      | scrypt-opt  | 16384 (14)  | 8   | 4339 (+54.9%)    |
-| EPYC 9334        | 64      | john --test | 16384 (14)  | 8   | 2801             |
-| EPYC 9334        | 64      | scrypt-opt  | 32768 (15)  | 8   | 2127             |
-| EPYC 9334        | 64      | scrypt-opt  | 16384 (14)  | 16  | 1213             |
-| EPYC 9334        | 64      | scrypt-opt  | 65536 (16)  | 8   | 1053             |
-| EPYC 9334        | 64      | scrypt-opt  | 131072 (17) | 8   | 496  (+41.7%)    |
-| EPYC 9334        | 64      | john --mask | 131072 (17) | 8   | 350              |
-| Ryzen 9 7950X    | 16      | scrypt-opt  | 1024  (10)  | 1   | 429985           |
-| Ryzen 9 7950X    | 16      | scrypt-opt  | 4096  (12)  | 8   | 6100             |
-| Ryzen 9 7950X    | 16      | scrypt-opt  | 8192  (13)  | 8   | 2827             |
-| Ryzen 9 7950X    | 16      | scrypt-opt  | 16384 (14)  | 8   | 1312 (+9.79%)    |
-| Ryzen 9 7950X    | 32      | john --mask | 16384 (14)  | 8   | 1195             |
-| Ryzen 9 7950X    | *32*    | scrypt-opt  | 16384 (14)  | 1   | 15040            |
-| Ryzen 9 7950X    | 16      | scrypt-opt  | 32768 (15)  | 8   | 632  (+8.77%)    |
-| Ryzen 9 7950X    | 32      | john --mask | 32768 (15)  | 8   | 581              |
-| Ryzen 9 7950X    | 16      | scrypt-opt  | 16384 (14)  | 16  | 652  (+8.67%)    |
-| Ryzen 9 7950X    | 32      | john --mask | 16384 (14)  | 16  | 600              |
-| Ryzen 9 7950X    | 16      | scrypt-opt  | 131072 (17) | 8   | 148  (+7.25%)    |
-| Ryzen 9 7950X    | 32      | john --mask | 131072 (17) | 8   | 138              |
-| i7-11370H        | 8       | scrypt-opt  | 1024  (10)  | 1   | 78920            |
-| i7-11370H        | 8       | scrypt-opt  | 16384 (14)  | 8   | 407              |
-| RS 4000 G11      | 12      | scrypt-opt  | 16384 (14)  | 8   | 740              |
-| RS 4000 G11      | 12      | scrypt-opt  | 16384 (14)  | 16  | 414              |
-| RS 4000 G11      | 12      | scrypt-opt  | 32768 (15)  | 8   | 355              |
-| Azure Cobalt 100 | 96      | scrypt-opt  | 16384 (14)  | 8   | 4237             |
-| Azure Cobalt 100 | 96      | scrypt-opt  | 16384 (15)  | 8   | 2110             |
-| Azure Cobalt 100 | 96      | scrypt-opt  | 16384 (14)  | 16  | 2276             |
-| Azure Cobalt 100 | 96      | scrypt-opt  | 16384 (17)  | 8   | 530              |
+| Host          | Threads | Program     | N (CF)      | R   | Throughput (c/s) |
+| ------------- | ------- | ----------- | ----------- | --- | ---------------- |
+| EPYC 9334     | 64      | scrypt-opt  | 1024  (10)  | 1   | 726363           |
+| EPYC 9334     | 64      | scrypt-opt  | 4096  (12)  | 8   | 20623            |
+| EPYC 9334     | 64      | scrypt-opt  | 8192  (13)  | 8   | 9374             |
+| EPYC 9334     | 64      | scrypt-opt  | 16384 (14)  | 8   | 4339 (+54.9%)    |
+| EPYC 9334     | 64      | john --test | 16384 (14)  | 8   | 2801             |
+| EPYC 9334     | 64      | scrypt-opt  | 32768 (15)  | 8   | 2127             |
+| EPYC 9334     | 64      | scrypt-opt  | 16384 (14)  | 16  | 1213             |
+| EPYC 9334     | 64      | scrypt-opt  | 65536 (16)  | 8   | 1053             |
+| EPYC 9334     | 64      | scrypt-opt  | 131072 (17) | 8   | 496  (+41.7%)    |
+| EPYC 9334     | 64      | john --mask | 131072 (17) | 8   | 350              |
+| Ryzen 9 7950X | 16      | scrypt-opt  | 1024  (10)  | 1   | 429985           |
+| Ryzen 9 7950X | 16      | scrypt-opt  | 4096  (12)  | 8   | 6100             |
+| Ryzen 9 7950X | 16      | scrypt-opt  | 8192  (13)  | 8   | 2827             |
+| Ryzen 9 7950X | 16      | scrypt-opt  | 16384 (14)  | 8   | 1312 (+9.79%)    |
+| Ryzen 9 7950X | 32      | john --mask | 16384 (14)  | 8   | 1195             |
+| Ryzen 9 7950X | *32*    | scrypt-opt  | 16384 (14)  | 1   | 15040            |
+| Ryzen 9 7950X | 16      | scrypt-opt  | 32768 (15)  | 8   | 632  (+8.77%)    |
+| Ryzen 9 7950X | 32      | john --mask | 32768 (15)  | 8   | 581              |
+| Ryzen 9 7950X | 16      | scrypt-opt  | 16384 (14)  | 16  | 652  (+8.67%)    |
+| Ryzen 9 7950X | 32      | john --mask | 16384 (14)  | 16  | 600              |
+| Ryzen 9 7950X | 16      | scrypt-opt  | 131072 (17) | 8   | 148  (+7.25%)    |
+| Ryzen 9 7950X | 32      | john --mask | 131072 (17) | 8   | 138              |
+| i7-11370H     | 8       | scrypt-opt  | 1024  (10)  | 1   | 78920            |
+| i7-11370H     | 8       | scrypt-opt  | 16384 (14)  | 8   | 407              |
+| RS 4000 G11   | 12      | scrypt-opt  | 16384 (14)  | 8   | 740              |
+| RS 4000 G11   | 12      | scrypt-opt  | 16384 (14)  | 16  | 414              |
+| RS 4000 G11   | 12      | scrypt-opt  | 32768 (15)  | 8   | 355              |
+
+These machines only have 128-bit SIMD and tests were performed using a plain old scalar/auto-vectorized core.
+
+| Azure Cobalt 100 | 96      | scrypt-opt  | 1024  (10)  | 1   | 684656           |
+| Azure Cobalt 100 | 96      | scrypt-opt  | 16384 (14)  | 8   | 4731             |
+| Azure Cobalt 100 | 96      | scrypt-opt  | 16384 (14)  | 16  | 2399             |
+| Azure Cobalt 100 | 96      | scrypt-opt  | 16384 (17)  | 8   | 586              |
 
 ### Browser WASM Comparison
 
@@ -164,9 +167,15 @@ See [examples](examples) for usage examples.
 
 Traditional approaches focus on software prefetching, but scrypt is purposefully designed to be serialized in both the Salsa20 core and $V_j$ access step. The address is only known at the last moment, so software prefetching cannot really significantly soften that latency. 
 
-Instead, the optimal use of hardware is to perform one $RoMix_{Back}$ and one independent $RoMix_{Front}$ at once per thread. This ensures that when the inevitable DRAM latency hits in the $V_j$ access step, the processor has more work to do per block and thus has to track fewer outstanding memory requests before stalling. We can also observe that $RoMix_{Front}$ and $RoMix_{Back}$ have identical arithmetic and increase power efficiency by zipping each $BlockMix$ operation from the two halves together and widening the Salsa20 core to dual-buffer. On platforms with advanced SIMD (AVX512) we can handle the permutation and extraction with high efficiency.
+Instead, the optimal use of hardware is to perform one $RoMix_{Back}$ and one independent $RoMix_{Front}$ at once per thread. 
 
-We can also optimize this $X \leftarrow BlockMix(X \oplus V_j)$ step by ping-ponging between two buffers (and optionally keeping one of them in registers to babysit MLP to really focus on the hard part), this makes sure writes to the buffer will be immediately read back one $BlockMix$ round later and keep them naturally in cache without requiring high latency nontemporal instructions.
+We can observe that $RoMix_{Front}$ and $RoMix_{Back}$ have identical arithmetic and increase power efficiency by zipping each $BlockMix$ operation from the two halves together and widening the Salsa20 core to dual-buffer. On platforms with advanced SIMD (AVX512) we can handle the permutation and extraction with high efficiency.
+ 
+This also ensures that when the inevitable DRAM latency hits in the $V_j$ access step, the processor has more work to do per block and if we can issue more useful work (even if stolen from the other half) in the latency bubble then our overall efficiency in that bubble is higher.
+
+The biggest limitation of this is we are working against the limitation of the latency bubble, which is usually counted in $\mu$-ops. If we can increase the amount of useful work with a sub-linear increase in $\mu$-ops, then we can achieve higher throughput. The trick is to use the other 128-bit half to smuggle another half of the work from $RoMix_{Front}$ without significantly increasing total $\mu$-ops/round. This way when the processor stalls at +32 bytes w.r.t. to the $RoMix_{Back}$ operation we have completed 64 bytes overall. However on machines with 128-bit SIMD, the compiler will be forced to emit 2x+ amount of instructions to do the same thing, which means the processor will stall at ~+16 bytes instead, that is not helpful.
+
+On the data layout side, we can also optimize this $X \leftarrow BlockMix(X \oplus V_j)$ step by ping-ponging between two buffers (and optionally keeping one of them in registers to babysit MLP to really focus on the hard part), this makes sure writes to the buffer will be immediately read back one $BlockMix$ round later and keep them naturally in cache without requiring high latency nontemporal instructions.
 
 Annotated Zen 4 build:
 
