@@ -137,10 +137,12 @@ Differences are computed against a native JtR build with AVX512VL enabled.
 
 These machines only have 128-bit SIMD and tests were performed using a plain old scalar/auto-vectorized core.
 
-| Azure Cobalt 100 | 96      | scrypt-opt  | 1024  (10)  | 1   | 684656           |
-| Azure Cobalt 100 | 96      | scrypt-opt  | 16384 (14)  | 8   | 4731             |
-| Azure Cobalt 100 | 96      | scrypt-opt  | 16384 (14)  | 16  | 2399             |
-| Azure Cobalt 100 | 96      | scrypt-opt  | 16384 (17)  | 8   | 586              |
+| Host             | Threads | Program    | N (CF)     | R   | Throughput (c/s) |
+| ---------------- | ------- | ---------- | ---------- | --- | ---------------- |
+| Azure Cobalt 100 | 96      | scrypt-opt | 1024  (10) | 1   | 684656           |
+| Azure Cobalt 100 | 96      | scrypt-opt | 16384 (14) | 8   | 4731             |
+| Azure Cobalt 100 | 96      | scrypt-opt | 16384 (14) | 16  | 2399             |
+| Azure Cobalt 100 | 96      | scrypt-opt | 16384 (17) | 8   | 586              |
 
 ### Browser WASM Comparison
 
