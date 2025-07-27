@@ -111,12 +111,12 @@ impl<T> DerefMut for Align64<T> {
 /// A box for a hugepage-backed buffer
 #[cfg(feature = "huge-page")]
 pub struct HugeSlice<T> {
-    #[cfg(all(target_os = "linux", feature = "std"))]
-    file: Option<std::fs::File>,
     ptr: *mut T,
     len: usize,
     #[cfg(any(target_os = "android", target_os = "linux"))]
     capacity: usize,
+    #[cfg(all(target_os = "linux", feature = "std"))]
+    file: Option<std::fs::File>,
 }
 
 #[cfg(feature = "huge-page")]
@@ -344,7 +344,7 @@ impl<T> HugeSlice<T> {
                         ptr: ptr.cast::<T>(),
                         len,
                         capacity: try_size,
-                        #[cfg(feature = "std")]
+                        #[cfg(all(target_os = "linux", feature = "std"))]
                         file: None,
                     });
                 }
@@ -370,6 +370,7 @@ impl<T> HugeSlice<T> {
 #[cfg(feature = "huge-page")]
 impl<T> HugeSlice<core::mem::MaybeUninit<T>> {
     /// Assume the buffer is initialized
+    #[cfg_attr(not(all(target_os = "linux", feature = "std")), expect(unused_mut))]
     pub unsafe fn assume_init(mut self) -> HugeSlice<T> {
         HugeSlice {
             ptr: self.ptr.cast::<T>(),
