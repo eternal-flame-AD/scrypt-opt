@@ -115,8 +115,8 @@ pub struct HugeSlice<T> {
     len: usize,
     #[cfg(any(target_os = "android", target_os = "linux"))]
     capacity: usize,
-    #[cfg(all(target_os = "linux", feature = "std"))]
-    file: Option<std::fs::File>,
+    #[cfg(any(target_os = "android", target_os = "linux"))]
+    file: std::fs::File,
 }
 
 #[cfg(feature = "huge-page")]
@@ -153,14 +153,6 @@ impl<T> HugeSlice<T> {
                 SE_PRIVILEGE_ENABLED, TOKEN_PRIVILEGES,
             };
 
-            let min_alloc_size = core::mem::size_of::<T>() * len;
-            if min_alloc_size == 0 {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    "Allocation size must be non-zero",
-                ));
-            }
-
             let large_page_minimum = GetLargePageMinimum();
             if large_page_minimum == 0 {
                 return Err(std::io::Error::new(
@@ -169,15 +161,37 @@ impl<T> HugeSlice<T> {
                 ));
             }
 
-            if large_page_minimum < core::mem::align_of::<T>() {
+            if core::mem::align_of::<T>() > large_page_minimum {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::Other,
                     format!(
-                        "Large page minimum ({}) is less than the alignment of the type {} ({})",
-                        large_page_minimum,
+                        "Alignment of the type is greater than the large page minimum: {} requires {} alignment, large page minimum is {}",
                         core::any::type_name::<T>(),
-                        core::mem::align_of::<T>()
+                        core::mem::align_of::<T>(),
+                        large_page_minimum
                     ),
+                ));
+            }
+
+            let min_alloc_size = core::mem::size_of::<T>()
+                .checked_mul(len)
+                .and_then(|x| x.checked_next_multiple_of(large_page_minimum))
+                .and_then(|x| x.checked_next_multiple_of(8))
+                .ok_or_else(|| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        format!(
+                            "Allocation size overflow (requested: {}, max: {})",
+                            core::mem::size_of::<T>() as u128 * len as u128,
+                            usize::MAX
+                        ),
+                    )
+                })?;
+
+            if min_alloc_size == 0 {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    "Allocation size must be non-zero",
                 ));
             }
 
@@ -225,7 +239,7 @@ impl<T> HugeSlice<T> {
 
             let ptr = VirtualAlloc(
                 core::ptr::null_mut(),
-                min_alloc_size.next_multiple_of(large_page_minimum),
+                min_alloc_size,
                 MEM_COMMIT | MEM_RESERVE | MEM_LARGE_PAGES,
                 PAGE_READWRITE,
             );
@@ -255,7 +269,7 @@ impl<T> HugeSlice<T> {
     #[cfg(any(target_os = "android", target_os = "linux"))]
     pub fn new_unix(
         len: usize,
-        #[cfg(all(target_os = "linux", feature = "std"))] file: Option<std::fs::File>,
+        #[cfg(target_os = "linux")] file: Option<std::fs::File>,
     ) -> Result<Self, std::io::Error> {
         unsafe {
             let pagesz = libc::sysconf(libc::_SC_PAGESIZE);
@@ -276,7 +290,18 @@ impl<T> HugeSlice<T> {
                 ));
             }
 
-            let alloc_min_len = core::mem::size_of::<T>() * len;
+            let alloc_min_len = core::mem::size_of::<T>()
+                .checked_mul(len)
+                .and_then(|x| x.checked_next_multiple_of(page_size))
+                .and_then(|x| x.checked_next_multiple_of(8))
+                .ok_or(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!(
+                        "Allocation length overflow (requested: {}, max: {})",
+                        core::mem::size_of::<T>() as u128 * len as u128,
+                        usize::MAX
+                    ),
+                ))?;
 
             if alloc_min_len == 0 {
                 return Err(std::io::Error::new(
@@ -285,13 +310,12 @@ impl<T> HugeSlice<T> {
                 ));
             }
 
-            #[cfg(all(target_os = "linux", feature = "std"))]
             if let Some(file) = file {
                 let ptr = libc::mmap64(
                     core::ptr::null_mut(),
                     alloc_min_len,
                     libc::PROT_READ | libc::PROT_WRITE,
-                    libc::MAP_PRIVATE | libc::MAP_HUGETLB | libc::MAP_POPULATE,
+                    libc::MAP_PRIVATE,
                     std::os::unix::io::AsRawFd::as_raw_fd(&file),
                     0,
                 );
@@ -300,8 +324,7 @@ impl<T> HugeSlice<T> {
                         ptr: ptr.cast::<T>(),
                         len,
                         capacity: alloc_min_len,
-                        #[cfg(feature = "std")]
-                        file: Some(file),
+                        file,
                     });
                 }
 
@@ -309,16 +332,18 @@ impl<T> HugeSlice<T> {
             }
 
             for (try_page_size, try_flags) in [
-                #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-                ((1 << 30), libc::MAP_HUGE_1GB),
-                #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-                ((256 << 20), libc::MAP_HUGE_256MB),
-                #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-                ((32 << 20), libc::MAP_HUGE_32MB),
-                #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-                ((16 << 20), libc::MAP_HUGE_16MB),
-                #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-                ((8 << 20), libc::MAP_HUGE_8MB),
+                #[cfg(target_os = "linux")]
+                ((1 << 30), libc::MFD_HUGE_1GB),
+                #[cfg(target_os = "linux")]
+                ((256 << 20), libc::MFD_HUGE_256MB),
+                #[cfg(target_os = "linux")]
+                ((32 << 20), libc::MFD_HUGE_32MB),
+                #[cfg(target_os = "linux")]
+                ((16 << 20), libc::MFD_HUGE_16MB),
+                #[cfg(target_os = "linux")]
+                ((8 << 20), libc::MFD_HUGE_8MB),
+                #[cfg(target_os = "linux")]
+                ((2 << 20), libc::MFD_HUGE_2MB),
                 ((page_size), 0),
             ]
             .into_iter()
@@ -326,17 +351,34 @@ impl<T> HugeSlice<T> {
             // don't grossly over size by capping page size at 2x amount of memory needed
             .filter(|(try_page_size, flags)| *flags == 0 || alloc_min_len * 2 > *try_page_size)
             {
-                let try_size = alloc_min_len.next_multiple_of(try_page_size);
+                let fd = libc::memfd_create(
+                    c"scrypt-opt-huge-page-file".as_ptr().cast(),
+                    libc::MFD_CLOEXEC | libc::MFD_HUGETLB | try_flags,
+                );
+
+                if fd == -1 {
+                    continue;
+                }
+
+                let try_file = std::os::unix::io::FromRawFd::from_raw_fd(fd);
+
+                let try_size = alloc_min_len
+                    .checked_next_multiple_of(try_page_size)
+                    .ok_or(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        format!(
+                            "Allocation length overflow (requested: {}, max: {})",
+                            alloc_min_len,
+                            usize::MAX
+                        ),
+                    ))?;
+
                 let ptr = libc::mmap64(
                     core::ptr::null_mut(),
                     try_size,
                     libc::PROT_READ | libc::PROT_WRITE,
-                    libc::MAP_PRIVATE
-                        | libc::MAP_ANONYMOUS
-                        | libc::MAP_HUGETLB
-                        | libc::MAP_POPULATE
-                        | try_flags,
-                    -1,
+                    libc::MAP_PRIVATE | libc::MAP_POPULATE,
+                    fd,
                     0,
                 );
                 if ptr != libc::MAP_FAILED {
@@ -344,8 +386,7 @@ impl<T> HugeSlice<T> {
                         ptr: ptr.cast::<T>(),
                         len,
                         capacity: try_size,
-                        #[cfg(all(target_os = "linux", feature = "std"))]
-                        file: None,
+                        file: try_file,
                     });
                 }
             }
@@ -371,14 +412,19 @@ impl<T> HugeSlice<T> {
 impl<T> HugeSlice<core::mem::MaybeUninit<T>> {
     /// Assume the buffer is initialized
     #[cfg_attr(not(all(target_os = "linux", feature = "std")), expect(unused_mut))]
-    pub unsafe fn assume_init(mut self) -> HugeSlice<T> {
+    pub unsafe fn assume_init(self) -> HugeSlice<T> {
+        let forgotten = core::mem::ManuallyDrop::new(self);
         HugeSlice {
-            ptr: self.ptr.cast::<T>(),
-            len: self.len,
+            ptr: forgotten.ptr.cast::<T>(),
+            len: forgotten.len,
             #[cfg(any(target_os = "android", target_os = "linux"))]
-            capacity: self.capacity,
-            #[cfg(all(target_os = "linux", feature = "std"))]
-            file: self.file.take(),
+            capacity: forgotten.capacity,
+            #[cfg(any(target_os = "android", target_os = "linux"))]
+            file: unsafe {
+                std::os::unix::io::FromRawFd::from_raw_fd(std::os::unix::io::AsRawFd::as_raw_fd(
+                    &forgotten.file,
+                ))
+            },
         }
     }
 }
@@ -500,8 +546,7 @@ impl<T> MaybeHugeSlice<T> {
     pub fn new_huge_slice_zeroed(len: usize) -> Result<Self, std::io::Error> {
         let b: HugeSlice<core::mem::MaybeUninit<T>> = HugeSlice::new(len)?;
         unsafe {
-            core::slice::from_raw_parts_mut(b.ptr.cast::<u8>(), len * core::mem::size_of::<T>())
-                .fill(0);
+            core::ptr::write_bytes(b.ptr.cast::<T>(), 0, len);
             Ok(MaybeHugeSlice::Huge(b.assume_init()))
         }
     }

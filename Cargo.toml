@@ -27,7 +27,6 @@ wasm-bindgen = { version = "0.2" }
 
 [target.'cfg(unix)'.dependencies]
 libc = { version = "0.2", optional = true }
-tempfile = { version = "3.20", optional = true }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.60", features = ["Win32_Security", "Win32_System_Memory", "Win32_System_Threading"], optional = true }
@@ -58,7 +57,7 @@ huge-page = ["dep:libc", "dep:windows-sys", "std"]
 alloc = []
 portable-simd = []
 core_affinity = ["std", "dep:core_affinity"]
-bin = ["std", "dep:base64", "dep:clap", "dep:tempfile"]
+bin = ["std", "dep:base64", "dep:clap"]
 
 [[bench]]
 name = "bench_hash"
