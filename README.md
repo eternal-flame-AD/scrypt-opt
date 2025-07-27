@@ -5,7 +5,7 @@ A pure-rust, permissively licensed, optimized scrypt implementation for moderate
 ## System Requirements
 
 - Rust 1.89+ or nightly
-- AVX512F is great (hand tuned), but at least a system with **256-bit SIMD** support with the "portable-simd" feature
+- AVX512F is great (hand tuned, about 10% extra throughput), but at least a system with **256-bit SIMD** support with the "portable-simd" feature
 
 ## Applications
 
@@ -107,27 +107,27 @@ Differences are computed against a native JtR build with AVX512VL enabled.
 
 | Host          | Threads | Program     | N (CF)      | R   | Throughput (c/s) |
 | ------------- | ------- | ----------- | ----------- | --- | ---------------- |
-| EPYC 9334     | 64      | scrypt-opt  | 1024  (10)  | 1   | 726363           |
-| EPYC 9334     | 64      | scrypt-opt  | 4096  (12)  | 8   | 20623            |
-| EPYC 9334     | 64      | scrypt-opt  | 8192  (13)  | 8   | 9374             |
-| EPYC 9334     | 64      | scrypt-opt  | 16384 (14)  | 8   | 4339 (+54.9%)    |
+| EPYC 9334     | 64      | scrypt-opt  | 1024  (10)  | 1   | 750894           |
+| EPYC 9334     | 64      | scrypt-opt  | 4096  (12)  | 8   | 20964            |
+| EPYC 9334     | 64      | scrypt-opt  | 8192  (13)  | 8   | 9458             |
+| EPYC 9334     | 64      | scrypt-opt  | 16384 (14)  | 8   | 4501 (+60.69%)   |
 | EPYC 9334     | 64      | john --test | 16384 (14)  | 8   | 2801             |
-| EPYC 9334     | 64      | scrypt-opt  | 32768 (15)  | 8   | 2127             |
-| EPYC 9334     | 64      | scrypt-opt  | 16384 (14)  | 16  | 1213             |
-| EPYC 9334     | 64      | scrypt-opt  | 65536 (16)  | 8   | 1053             |
-| EPYC 9334     | 64      | scrypt-opt  | 131072 (17) | 8   | 496  (+41.7%)    |
+| EPYC 9334     | 64      | scrypt-opt  | 32768 (15)  | 8   | 2202             |
+| EPYC 9334     | 64      | scrypt-opt  | 16384 (14)  | 16  | 2462             |
+| EPYC 9334     | 64      | scrypt-opt  | 65536 (16)  | 8   | 1084             |
+| EPYC 9334     | 64      | scrypt-opt  | 131072 (17) | 8   | 536  (+53.14%)   |
 | EPYC 9334     | 64      | john --mask | 131072 (17) | 8   | 350              |
-| Ryzen 9 7950X | 16      | scrypt-opt  | 1024  (10)  | 1   | 429985           |
-| Ryzen 9 7950X | 16      | scrypt-opt  | 4096  (12)  | 8   | 6100             |
-| Ryzen 9 7950X | 16      | scrypt-opt  | 8192  (13)  | 8   | 2827             |
-| Ryzen 9 7950X | 16      | scrypt-opt  | 16384 (14)  | 8   | 1312 (+9.79%)    |
+| Ryzen 9 7950X | *32*    | scrypt-opt  | 1024  (10)  | 1   | 439933           |
+| Ryzen 9 7950X | 16      | scrypt-opt  | 4096  (12)  | 8   | 6850             |
+| Ryzen 9 7950X | 16      | scrypt-opt  | 8192  (13)  | 8   | 2878             |
+| Ryzen 9 7950X | 16      | scrypt-opt  | 16384 (14)  | 8   | 1320 (+10.46%)   |
 | Ryzen 9 7950X | 32      | john --mask | 16384 (14)  | 8   | 1195             |
-| Ryzen 9 7950X | *32*    | scrypt-opt  | 16384 (14)  | 1   | 15040            |
-| Ryzen 9 7950X | 16      | scrypt-opt  | 32768 (15)  | 8   | 632  (+8.77%)    |
+| Ryzen 9 7950X | *32*    | scrypt-opt  | 16384 (14)  | 1   | 16226            |
+| Ryzen 9 7950X | 16      | scrypt-opt  | 32768 (15)  | 8   | 635  (+9.29%)    |
 | Ryzen 9 7950X | 32      | john --mask | 32768 (15)  | 8   | 581              |
-| Ryzen 9 7950X | 16      | scrypt-opt  | 16384 (14)  | 16  | 652  (+8.67%)    |
+| Ryzen 9 7950X | 16      | scrypt-opt  | 16384 (14)  | 16  | 657  (+9.50%)    |
 | Ryzen 9 7950X | 32      | john --mask | 16384 (14)  | 16  | 600              |
-| Ryzen 9 7950X | 16      | scrypt-opt  | 131072 (17) | 8   | 148  (+7.25%)    |
+| Ryzen 9 7950X | 16      | scrypt-opt  | 131072 (17) | 8   | 150  (+8.70%)    |
 | Ryzen 9 7950X | 32      | john --mask | 131072 (17) | 8   | 138              |
 | i7-11370H     | 8       | scrypt-opt  | 1024  (10)  | 1   | 78920            |
 | i7-11370H     | 8       | scrypt-opt  | 16384 (14)  | 8   | 407              |

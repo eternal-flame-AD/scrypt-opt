@@ -89,50 +89,18 @@ macro_rules! quarter_ymmwords {
     };
 }
 
-/// Pivot to column-major order
+/// Pivot to column-major order (A, B, D, C)
 struct Pivot;
 
 impl Swizzle<16> for Pivot {
-    const INDEX: [usize; 16] = [0, 5, 10, 15, 4, 9, 14, 3, 8, 13, 2, 7, 12, 1, 6, 11];
-}
-
-/// Pivot two independent blocks into column-major order, extract A and B
-struct Pivot2Ab;
-
-impl Swizzle<16> for Pivot2Ab {
-    const INDEX: [usize; 16] = const {
-        let mut index = [0; 16];
-        let mut i = 0;
-        while i < 16 {
-            let offset = if (i / 4) % 2 == 0 { 0 } else { 16 };
-            index[i] = <Pivot as Swizzle<16>>::INDEX[i / 8 * 4 + i % 4] + offset;
-            i += 1;
-        }
-        index
-    };
-}
-
-/// Pivot two independent blocks into column-major order, extract C and D
-struct Pivot2Cd;
-
-impl Swizzle<16> for Pivot2Cd {
-    const INDEX: [usize; 16] = const {
-        let mut index = [0; 16];
-        let mut i = 0;
-        while i < 16 {
-            let offset = if (i / 4) % 2 == 0 { 0 } else { 16 };
-            index[i] = <Pivot as Swizzle<16>>::INDEX[8 + i / 8 * 4 + i % 4] + offset;
-            i += 1;
-        }
-        index
-    };
+    const INDEX: [usize; 16] = [0, 5, 10, 15, 4, 9, 14, 3, 12, 1, 6, 11, 8, 13, 2, 7];
 }
 
 /// Round shuffle the first 4 lanes of a vector of u32
 #[allow(unused, reason = "rust-analyzer spam, actually used")]
-struct RoundShuffleAbcd;
+struct RoundShuffleAdbc;
 
-impl Swizzle<16> for RoundShuffleAbcd {
+impl Swizzle<16> for RoundShuffleAdbc {
     const INDEX: [usize; 16] = const {
         let mut index = [0; 16];
         let mut i = 0;
@@ -141,15 +109,15 @@ impl Swizzle<16> for RoundShuffleAbcd {
             i += 1;
         }
         while i < 8 {
-            index[i] = 12 + (i + 1) % 4;
+            index[i] = 8 + (i + 1) % 4;
             i += 1;
         }
         while i < 12 {
-            index[i] = 8 + (i + 2) % 4;
+            index[i] = 4 + (i + 3) % 4;
             i += 1;
         }
         while i < 16 {
-            index[i] = 4 + (i + 3) % 4;
+            index[i] = 12 + (i + 2) % 4;
             i += 1;
         }
         index
@@ -158,16 +126,6 @@ impl Swizzle<16> for RoundShuffleAbcd {
 
 #[cfg(feature = "portable-simd")]
 impl core::simd::Swizzle<16> for Pivot {
-    const INDEX: [usize; 16] = <Self as Swizzle<16>>::INDEX;
-}
-
-#[cfg(feature = "portable-simd")]
-impl core::simd::Swizzle<16> for Pivot2Ab {
-    const INDEX: [usize; 16] = <Self as Swizzle<16>>::INDEX;
-}
-
-#[cfg(feature = "portable-simd")]
-impl core::simd::Swizzle<16> for Pivot2Cd {
     const INDEX: [usize; 16] = <Self as Swizzle<16>>::INDEX;
 }
 
@@ -181,7 +139,7 @@ pub trait BlockType: Clone + Copy {
     fn xor_with(&mut self, other: Self);
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
 impl BlockType for __m512i {
     unsafe fn read_from_ptr(ptr: *const Self) -> Self {
         unsafe { _mm512_load_si512(ptr.cast::<__m512i>()) }
@@ -336,18 +294,49 @@ pub struct BlockAvx512F {
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
 impl Salsa20 for BlockAvx512F {
     type Lanes = U1;
+    #[cfg(target_feature = "avx512f")]
     type Block = __m512i;
+
+    #[inline(always)]
+    fn shuffle_in(ptr: &mut Align64<[u32; 16]>) {
+        unsafe {
+            _mm512_store_si512(
+                ptr.as_mut_ptr().cast::<__m512i>(),
+                _mm512_permutexvar_epi32(
+                    <Pivot as Swizzle<16>>::INDEX_ZMM,
+                    _mm512_load_si512(ptr.as_ptr().cast::<__m512i>()),
+                ),
+            )
+        }
+    }
+
+    #[inline(always)]
+    fn shuffle_out(ptr: &mut Align64<[u32; 16]>) {
+        unsafe {
+            _mm512_store_si512(
+                ptr.as_mut_ptr().cast::<__m512i>(),
+                _mm512_permutexvar_epi32(
+                    <Inverse<_, Pivot> as Swizzle<16>>::INDEX_ZMM,
+                    _mm512_load_si512(ptr.as_ptr().cast::<__m512i>()),
+                ),
+            )
+        }
+    }
 
     #[inline(always)]
     fn read(ptr: GenericArray<&Self::Block, U1>) -> Self {
         unsafe {
-            let t = _mm512_permutexvar_epi32(Pivot::INDEX_ZMM, *ptr[0]);
-            let a = _mm512_extracti32x4_epi32(t, 0);
+            let t = *ptr[0];
             let b = _mm512_extracti32x4_epi32(t, 1);
-            let c = _mm512_extracti32x4_epi32(t, 2);
-            let d = _mm512_extracti32x4_epi32(t, 3);
+            let d = _mm512_extracti32x4_epi32(t, 2);
+            let c = _mm512_extracti32x4_epi32(t, 3);
 
-            Self { a, b, c, d }
+            Self {
+                a: _mm512_castsi512_si128(t),
+                b,
+                c,
+                d,
+            }
         }
     }
 
@@ -358,8 +347,8 @@ impl Salsa20 for BlockAvx512F {
                 *ptr[0],
                 _mm512_permutex2var_epi32(
                     _mm512_castsi256_si512(_mm256_setr_m128i(self.a, self.b)),
-                    ConcatLo::<_, Compose<_, RoundShuffleAbcd, Inverse<_, Pivot>>>::INDEX_ZMM,
-                    _mm512_castsi256_si512(_mm256_setr_m128i(self.c, self.d)),
+                    ConcatLo::<_, RoundShuffleAdbc>::INDEX_ZMM,
+                    _mm512_castsi256_si512(_mm256_setr_m128i(self.d, self.c)),
                 ),
             );
         }
@@ -417,38 +406,53 @@ impl Salsa20 for BlockAvx512F2 {
     type Block = __m512i;
 
     #[inline(always)]
+    fn shuffle_in(ptr: &mut Align64<[u32; 16]>) {
+        BlockAvx512F::shuffle_in(ptr);
+    }
+
+    #[inline(always)]
+    fn shuffle_out(ptr: &mut Align64<[u32; 16]>) {
+        BlockAvx512F::shuffle_out(ptr);
+    }
+
+    // this is a more ILP version that is slightly faster (~2%) and doesn't need 2 more registers
+    #[inline(always)]
     fn read(ptr: GenericArray<&Self::Block, U2>) -> Self {
         unsafe {
-            // has initial value for buffer 0 and takes output AB
-            let mut save_0_ab_out = *ptr[0];
-            // has initial value for buffer 1 and takes output CD
-            let mut save_1_cd_out = *ptr[1];
+            let buf0_dc = _mm512_extracti64x4_epi64(*ptr[0], 1);
+            let buf1_dc = _mm512_extracti64x4_epi64(*ptr[1], 1);
+            let buf0_ab = _mm512_castsi512_si256(*ptr[0]);
+            let buf1_ab = _mm512_castsi512_si256(*ptr[1]);
 
-            let mut b: __m256i;
-            let mut d: __m256i;
-
-            // force a more compact version for stability, sometimes LLVM generates a 4xvpermt2d version
-            // that isn't as good and takes away registers that could be used for keeping a temporary buffer
-            // in registers
-            //
-            // SAFETY: gated behind target_feature = "avx512f"
-            core::arch::asm!(
-                "vpermt2d {save_0_ab_out}, {perm_ab}, {save_1_cd_out}",
-                "vextracti64x4 {b}, {save_0_ab_out}, 1",
-                "vpermt2d {save_1_cd_out}, {perm_cd_flipped}, {save_0_alias}",
-                "vextracti64x4 {d}, {save_1_cd_out}, 1",
-                save_0_ab_out = inout(zmm_reg) save_0_ab_out,
-                save_0_alias = in(zmm_reg) *ptr[0],
-                save_1_cd_out = inout(zmm_reg) save_1_cd_out,
-                perm_ab = in(zmm_reg) Pivot2Ab::INDEX_ZMM,
-                perm_cd_flipped = in(zmm_reg) FlipTable16::<Pivot2Cd>::INDEX_ZMM,
-                b = out(ymm_reg) b,
-                d = out(ymm_reg) d,
-                options(pure, nomem, nostack, preserves_flags),
+            // the first operation is a + d, so we place them at the beginning
+            let a = _mm256_setr_m128i(
+                _mm256_castsi256_si128(buf0_ab),
+                _mm256_castsi256_si128(buf1_ab),
             );
 
-            let a = _mm512_castsi512_si256(save_0_ab_out);
-            let c = _mm512_castsi512_si256(save_1_cd_out);
+            let d = _mm256_setr_m128i(
+                _mm256_castsi256_si128(buf0_dc),
+                _mm256_castsi256_si128(buf1_dc),
+            );
+
+            let mut c;
+            let mut b;
+
+            // C must come last because it is used last (~3% penalty when flipped)
+            //
+            // SAFETY: this is AVX2 code
+            core::arch::asm!(
+                "vperm2i128 {b}, {buf0_ab}, {buf1_ab}, {imm}",
+                "vperm2i128 {c}, {buf0_dc}, {buf1_dc}, {imm}",
+                b = out(ymm_reg) b,
+                buf1_ab = in(ymm_reg) buf1_ab,
+                buf0_ab = in(ymm_reg) buf0_ab,
+                c = lateout(ymm_reg) c,
+                buf1_dc = in(ymm_reg) buf1_dc,
+                buf0_dc = in(ymm_reg) buf0_dc,
+                imm = const 0b0011_0001,
+                options(pure, nomem, nostack, preserves_flags),
+            );
 
             Self { a, b, c, d }
         }
@@ -458,28 +462,17 @@ impl Salsa20 for BlockAvx512F2 {
     fn write(&self, mut ptr: GenericArray<&mut Self::Block, U2>) {
         unsafe {
             let a0a1b0b1 = _mm512_inserti64x4(_mm512_castsi256_si512(self.a), self.b, 1);
-            let c0c1d0d1 = _mm512_inserti64x4(_mm512_castsi256_si512(self.c), self.d, 1);
+            let d0d1c0c1 = _mm512_inserti64x4(_mm512_castsi256_si512(self.d), self.c, 1);
 
-            let buf0_output =
-                _mm512_permutex2var_epi32(
-                    a0a1b0b1,
-                    Compose::<
-                        _,
-                        ExtractU32x2<_, false>,
-                        Compose<_, RoundShuffleAbcd, Inverse<_, Pivot>>,
-                    >::INDEX_ZMM,
-                    c0c1d0d1,
-                );
+            let buf0_output = _mm512_permutex2var_epi32(
+                a0a1b0b1,
+                Compose::<_, ExtractU32x2<_, false>, RoundShuffleAdbc>::INDEX_ZMM,
+                d0d1c0c1,
+            );
             // use a flipped table for smaller register pressure
             let buf1_output = _mm512_permutex2var_epi32(
-                c0c1d0d1,
-                FlipTable16::<
-                    Compose<
-                        _,
-                        ExtractU32x2<_, true>,
-                        Compose<_, RoundShuffleAbcd, Inverse<_, Pivot>>,
-                    >,
-                >::INDEX_ZMM,
+                d0d1c0c1,
+                FlipTable16::<Compose<_, ExtractU32x2<_, true>, RoundShuffleAdbc>>::INDEX_ZMM,
                 a0a1b0b1,
             );
 
@@ -566,8 +559,8 @@ impl Salsa20 for BlockPortableSimd {
     fn read(ptr: GenericArray<&Self::Block, U1>) -> Self {
         let a = ptr[0].extract::<0, 4>();
         let b = ptr[0].extract::<4, 4>();
-        let c = ptr[0].extract::<8, 4>();
-        let d = ptr[0].extract::<12, 4>();
+        let d = ptr[0].extract::<8, 4>();
+        let c = ptr[0].extract::<12, 4>();
 
         Self { a, b, c, d }
     }
@@ -578,10 +571,10 @@ impl Salsa20 for BlockPortableSimd {
 
         // straighten vectors
         let ab = Identity::<8>::concat_swizzle(self.a, self.b);
-        let cd = Identity::<8>::concat_swizzle(self.c, self.d);
-        let abcd = Identity::<16>::concat_swizzle(ab, cd);
+        let dc = Identity::<8>::concat_swizzle(self.d, self.c);
+        let abdc = Identity::<16>::concat_swizzle(ab, dc);
 
-        *ptr[0] += abcd;
+        *ptr[0] += abdc;
     }
 
     #[inline(always)]
@@ -631,14 +624,14 @@ impl Salsa20 for BlockPortableSimd2 {
     #[inline(always)]
     fn read(ptr: GenericArray<&Self::Block, U2>) -> Self {
         let buffer0_ab = core::simd::simd_swizzle!(*ptr[0], [0, 1, 2, 3, 4, 5, 6, 7]);
-        let buffer0_cd = core::simd::simd_swizzle!(*ptr[0], [8, 9, 10, 11, 12, 13, 14, 15]);
+        let buffer0_dc = core::simd::simd_swizzle!(*ptr[0], [8, 9, 10, 11, 12, 13, 14, 15]);
         let buffer1_ab = core::simd::simd_swizzle!(*ptr[1], [0, 1, 2, 3, 4, 5, 6, 7]);
-        let buffer1_cd = core::simd::simd_swizzle!(*ptr[1], [8, 9, 10, 11, 12, 13, 14, 15]);
+        let buffer1_dc = core::simd::simd_swizzle!(*ptr[1], [8, 9, 10, 11, 12, 13, 14, 15]);
 
         let a = core::simd::simd_swizzle!(buffer0_ab, buffer1_ab, [0, 1, 2, 3, 8, 9, 10, 11]);
         let b = core::simd::simd_swizzle!(buffer0_ab, buffer1_ab, [4, 5, 6, 7, 12, 13, 14, 15]);
-        let c = core::simd::simd_swizzle!(buffer0_cd, buffer1_cd, [0, 1, 2, 3, 8, 9, 10, 11]);
-        let d = core::simd::simd_swizzle!(buffer0_cd, buffer1_cd, [4, 5, 6, 7, 12, 13, 14, 15]);
+        let d = core::simd::simd_swizzle!(buffer0_dc, buffer1_dc, [0, 1, 2, 3, 8, 9, 10, 11]);
+        let c = core::simd::simd_swizzle!(buffer0_dc, buffer1_dc, [4, 5, 6, 7, 12, 13, 14, 15]);
 
         Self { a, b, c, d }
     }
@@ -652,11 +645,11 @@ impl Salsa20 for BlockPortableSimd2 {
 
         let a0b0 = core::simd::simd_swizzle!(self.a, self.b, [0, 1, 2, 3, 8, 9, 10, 11]);
         let a1b1 = core::simd::simd_swizzle!(self.a, self.b, [4, 5, 6, 7, 12, 13, 14, 15]);
-        let c0d0 = core::simd::simd_swizzle!(self.c, self.d, [0, 1, 2, 3, 8, 9, 10, 11]);
-        let c1d1 = core::simd::simd_swizzle!(self.c, self.d, [4, 5, 6, 7, 12, 13, 14, 15]);
+        let d0c0 = core::simd::simd_swizzle!(self.d, self.c, [0, 1, 2, 3, 8, 9, 10, 11]);
+        let d1c1 = core::simd::simd_swizzle!(self.d, self.c, [4, 5, 6, 7, 12, 13, 14, 15]);
 
-        *ptr[0] += Identity::<16>::concat_swizzle(a0b0, c0d0);
-        *ptr[1] += Identity::<16>::concat_swizzle(a1b1, c1d1);
+        *ptr[0] += Identity::<16>::concat_swizzle(a0b0, d0c0);
+        *ptr[1] += Identity::<16>::concat_swizzle(a1b1, d1c1);
     }
 
     #[inline(always)]
