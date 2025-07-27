@@ -98,9 +98,9 @@ impl Swizzle<16> for Pivot {
 
 /// Round shuffle the first 4 lanes of a vector of u32
 #[allow(unused, reason = "rust-analyzer spam, actually used")]
-struct RoundShuffleAdbc;
+struct RoundShuffleAbdc;
 
-impl Swizzle<16> for RoundShuffleAdbc {
+impl Swizzle<16> for RoundShuffleAbdc {
     const INDEX: [usize; 16] = const {
         let mut index = [0; 16];
         let mut i = 0;
@@ -294,7 +294,6 @@ pub struct BlockAvx512F {
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
 impl Salsa20 for BlockAvx512F {
     type Lanes = U1;
-    #[cfg(target_feature = "avx512f")]
     type Block = __m512i;
 
     #[inline(always)]
@@ -347,7 +346,7 @@ impl Salsa20 for BlockAvx512F {
                 *ptr[0],
                 _mm512_permutex2var_epi32(
                     _mm512_castsi256_si512(_mm256_setr_m128i(self.a, self.b)),
-                    ConcatLo::<_, RoundShuffleAdbc>::INDEX_ZMM,
+                    ConcatLo::<_, RoundShuffleAbdc>::INDEX_ZMM,
                     _mm512_castsi256_si512(_mm256_setr_m128i(self.d, self.c)),
                 ),
             );
@@ -440,7 +439,7 @@ impl Salsa20 for BlockAvx512F2 {
 
             // C must come last because it is used last (~3% penalty when flipped)
             //
-            // SAFETY: this is AVX2 code
+            // SAFETY: this is AVX2 code gated behind AVX512F
             core::arch::asm!(
                 "vperm2i128 {b}, {buf0_ab}, {buf1_ab}, {imm}",
                 "vperm2i128 {c}, {buf0_dc}, {buf1_dc}, {imm}",
@@ -466,13 +465,13 @@ impl Salsa20 for BlockAvx512F2 {
 
             let buf0_output = _mm512_permutex2var_epi32(
                 a0a1b0b1,
-                Compose::<_, ExtractU32x2<_, false>, RoundShuffleAdbc>::INDEX_ZMM,
+                Compose::<_, ExtractU32x2<_, false>, RoundShuffleAbdc>::INDEX_ZMM,
                 d0d1c0c1,
             );
             // use a flipped table for smaller register pressure
             let buf1_output = _mm512_permutex2var_epi32(
                 d0d1c0c1,
-                FlipTable16::<Compose<_, ExtractU32x2<_, true>, RoundShuffleAdbc>>::INDEX_ZMM,
+                FlipTable16::<Compose<_, ExtractU32x2<_, true>, RoundShuffleAbdc>>::INDEX_ZMM,
                 a0a1b0b1,
             );
 
