@@ -182,35 +182,36 @@ On the data layout side, we can also optimize this $X \leftarrow BlockMix(X \opl
 Annotated Zen 4 build:
 
 ```asm
-vmovdqa64 zmm2, zmmword ptr [rip + scrypt_opt::salsa20::PIVOT2_AB]  ; permutation constants stay in registers
-vmovdqa64 zmm3, zmmword ptr [rip + scrypt_opt::salsa20::PIVOT2_CD]
-vmovdqa64 zmm4, zmmword ptr [rip + scrypt_opt::salsa20::SHUFFLE_UNPIVOT2_0]
-vmovdqa64 zmm5, zmmword ptr [rip + scrypt_opt::salsa20::SHUFFLE_UNPIVOT2_1]
+vpmovsxbd zmm17, xmmword ptr [rip + .LCPI88_8]   ; gather data, perform final round shuffle and permute into memory layout
+vpmovsxbd zmm18, xmmword ptr [rip + .LCPI88_9]
 
 ; ...
 
-vpaddd ymm21, ymm19, ymm18
-vprold ymm21, ymm21, 18
-vpxord ymm12, ymm12, ymm21                     ; last round of previous 2-buffer ARX, dual buffer version of the ARX+vpshufd stuff
-vinserti64x4 zmm20, zmm20, ymm12, 1            ; recombine results from two blocks
-vinserti64x4 zmm12, zmm19, ymm18, 1
-vmovdqa64 zmm18, zmm20
-vpermt2d zmm18, zmm4, zmm12                    ; combine the final Salsa20 shuffle and pivot back to row-major
-vpermt2d zmm20, zmm5, zmm12
-vpaddd zmm12, zmm18, zmm10                     ; feedbacks
-vpaddd zmm10, zmm20, zmm6
-vmovdqa64 zmmword ptr [rbx + r11 + 640], zmm12              ; write the result back for the next block
-vpxord zmm6, zmm12, zmmword ptr [rbx + r11 + 256]           ; XOR for X ← BlockMix(X xor Vj) step, X is already register resident
-vpternlogd zmm8, zmm10, zmmword ptr [r12 + r14 + 256], 150  ; 3-input AND-OR-XOR for RoMix_Front part
-vmovdqa64 zmm19, zmm6                                       ; save the result for the next block feedback
-vpermt2d zmm19, zmm3, zmm8                                  ; Distribute CD to column-major for the next block
-vmovdqa64 zmm18, zmm6                                       ; save the result for the next block feedback
-vpermt2d zmm18, zmm2, zmm8                                  ; Distribute AB to column-major for the next block
-vextracti64x4 ymm21, zmm19, 1
-vextracti64x4 ymm20, zmm18, 1
-vpaddd ymm22, ymm21, ymm18                                  ; Next Salsa20/8 rounds
-vprold ymm22, ymm22, 7
-vpxord ymm20, ymm20, ymm22
+vpxord ymm2, ymm19, ymm2
+vpaddd ymm19, ymm2, ymm1
+vinserti64x4 zmm1, zmm2, ymm1, 1      ; recombine results from two blocks
+vprold ymm19, ymm19, 18
+vpxord ymm16, ymm19, ymm16            ; last round of previous 2-buffer ARX, dual buffer version of the ARX+vpshufd stuff
+vinserti64x4 zmm3, zmm16, ymm3, 1
+vmovdqa64 zmm2, zmm3
+vpermt2d zmm3, zmm18, zmm1            ; combine the final Salsa20 shuffle and pivot back to memory layout (A, B, D, C)
+vpermt2d zmm2, zmm17, zmm1
+vpaddd zmm1, zmm2, zmm8               ; feedbacks
+vpaddd zmm0, zmm3, zmm0
+vmovdqa64 zmmword ptr [rdx + r9 - 1728], zmm1
+vmovdqa64 zmmword ptr [rax + 896], zmm0
+vpxord zmm8, zmm1, zmmword ptr [rdx + r9 - 2560]
+vpternlogd zmm9, zmm0, zmmword ptr [rdi + r10 + 64], 150
+vextracti64x4 ymm0, zmm8, 1           ; Extract DC
+vextracti64x4 ymm1, zmm9, 1           ; Extract AB
+vinserti128 ymm2, ymm8, xmm9, 1       ; Pack A
+vinserti128 ymm3, ymm0, xmm1, 1       ; Pack B
+#APP                                  ; manually enforced instruction order to put C in the highest latency position
+vperm2i128 ymm4, ymm8, ymm9, 49       ; select B
+vperm2i128 ymm0, ymm0, ymm1, 49       ; select C
+#NO_APP
+vpaddd ymm1, ymm3, ymm2               ; Next Salsa20/8 rounds
+vprold ymm1, ymm1, 7
 ```
 
 ## License
