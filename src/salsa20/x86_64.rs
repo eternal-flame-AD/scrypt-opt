@@ -1,4 +1,4 @@
-use core::arch::x86_64::*;
+use core::{arch::x86_64::*, sync::atomic::AtomicU8};
 
 use super::*;
 use generic_array::{
@@ -25,7 +25,7 @@ macro_rules! mm256_rol_epi32x {
     };
 }
 
-#[cfg(all(target_feature = "avx2", not(target_feature = "avx512vl")))]
+#[cfg(not(target_feature = "avx512vl"))]
 #[allow(unused_macros)]
 // LLVM can rewrite this as _mm512_rol_epi32(_mm512_zextsi128_si512(w), $amt) automatically on AVX512F
 macro_rules! mm_rol_epi32x {
@@ -35,7 +35,7 @@ macro_rules! mm_rol_epi32x {
     }};
 }
 
-#[cfg(all(target_feature = "avx2", not(target_feature = "avx512vl")))]
+#[cfg(not(target_feature = "avx512vl"))]
 #[allow(unused_macros)]
 // LLVM can rewrite this as _mm512_rol_epi32(_mm512_zextsi256_si512(w), $amt) automatically on AVX512F
 macro_rules! mm256_rol_epi32x {
@@ -54,7 +54,6 @@ macro_rules! quarter_xmmwords {
     };
 }
 
-#[cfg(target_feature = "avx2")]
 macro_rules! quarter_ymmwords {
     ($a:expr, $b:expr, $c:expr, $d:expr) => {
         $b = _mm256_xor_si256($b, mm256_rol_epi32x!(_mm256_add_epi32($a, $d), 7));
@@ -173,7 +172,6 @@ impl Salsa20 for BlockAvx512F {
 }
 
 /// A solution for 1 lane of 512-bit blocks
-#[cfg(target_feature = "avx2")]
 pub struct BlockAvx2 {
     a: __m128i,
     b: __m128i,
@@ -181,13 +179,9 @@ pub struct BlockAvx2 {
     d: __m128i,
 }
 
-#[cfg(target_feature = "avx2")]
-impl Salsa20 for BlockAvx2 {
-    type Lanes = U1;
-    type Block = [__m256i; 2];
-
-    #[inline(always)]
-    fn shuffle_in(ptr: &mut Align64<[u32; 16]>) {
+impl BlockAvx2 {
+    #[target_feature(enable = "avx2")]
+    fn shuffle_in_impl(ptr: &mut Align64<[u32; 16]>) {
         unsafe {
             let tmp = ptr.clone();
             for i in 0..16 {
@@ -196,8 +190,8 @@ impl Salsa20 for BlockAvx2 {
         }
     }
 
-    #[inline(always)]
-    fn shuffle_out(ptr: &mut Align64<[u32; 16]>) {
+    #[target_feature(enable = "avx2")]
+    fn shuffle_out_impl(ptr: &mut Align64<[u32; 16]>) {
         unsafe {
             let tmp = ptr.clone();
             for i in 0..16 {
@@ -206,8 +200,8 @@ impl Salsa20 for BlockAvx2 {
         }
     }
 
-    #[inline(always)]
-    fn read(ptr: GenericArray<&Self::Block, U1>) -> Self {
+    #[target_feature(enable = "avx2")]
+    fn read_impl(ptr: GenericArray<&[__m256i; 2], U1>) -> Self {
         unsafe {
             let [ab, dc] = *ptr[0];
             let a = _mm256_castsi256_si128(ab);
@@ -219,8 +213,8 @@ impl Salsa20 for BlockAvx2 {
         }
     }
 
-    #[inline(always)]
-    fn write(&self, mut ptr: GenericArray<&mut Self::Block, U1>) {
+    #[target_feature(enable = "avx2")]
+    fn write_impl(&self, mut ptr: GenericArray<&mut [__m256i; 2], U1>) {
         unsafe {
             let ab = _mm256_setr_m128i(self.a, self.b);
             let dc = _mm256_setr_m128i(self.d, self.c);
@@ -229,8 +223,8 @@ impl Salsa20 for BlockAvx2 {
         }
     }
 
-    #[inline(always)]
-    fn keystream<const ROUND_PAIRS: usize>(&mut self) {
+    #[target_feature(enable = "avx2")]
+    fn keystream_impl<const ROUND_PAIRS: usize>(&mut self) {
         unsafe {
             if ROUND_PAIRS == 0 {
                 return;
@@ -249,6 +243,40 @@ impl Salsa20 for BlockAvx2 {
                 (self.b, self.d) = (self.d, self.b);
             }
         }
+    }
+}
+
+impl Salsa20 for BlockAvx2 {
+    type Lanes = U1;
+    type Block = [__m256i; 2];
+
+    #[inline(always)]
+    fn shuffle_in(ptr: &mut Align64<[u32; 16]>) {
+        unsafe {
+            BlockAvx2::shuffle_in_impl(ptr);
+        }
+    }
+
+    #[inline(always)]
+    fn shuffle_out(ptr: &mut Align64<[u32; 16]>) {
+        unsafe {
+            BlockAvx2::shuffle_out_impl(ptr);
+        }
+    }
+
+    #[inline(always)]
+    fn read(ptr: GenericArray<&Self::Block, U1>) -> Self {
+        unsafe { BlockAvx2::read_impl(ptr) }
+    }
+
+    #[inline(always)]
+    fn write(&self, mut ptr: GenericArray<&mut Self::Block, U1>) {
+        unsafe { BlockAvx2::write_impl(self, ptr) }
+    }
+
+    #[inline(always)]
+    fn keystream<const ROUND_PAIRS: usize>(&mut self) {
+        unsafe { BlockAvx2::keystream_impl::<ROUND_PAIRS>(self) }
     }
 }
 
@@ -378,7 +406,6 @@ impl Salsa20 for BlockAvx512FMb2 {
 }
 
 /// A solution for 2 lanes of 256-bit blocks
-#[cfg(target_feature = "avx2")]
 pub struct BlockAvx2Mb2 {
     a: __m256i,
     b: __m256i,
@@ -386,24 +413,10 @@ pub struct BlockAvx2Mb2 {
     d: __m256i,
 }
 
-#[cfg(target_feature = "avx2")]
-impl Salsa20 for BlockAvx2Mb2 {
-    type Lanes = U2;
-    type Block = [__m256i; 2];
-
-    #[inline(always)]
-    fn shuffle_in(ptr: &mut Align64<[u32; 16]>) {
-        BlockAvx2::shuffle_in(ptr);
-    }
-
-    #[inline(always)]
-    fn shuffle_out(ptr: &mut Align64<[u32; 16]>) {
-        BlockAvx2::shuffle_out(ptr);
-    }
-
+impl BlockAvx2Mb2 {
     // this is a more ILP version that is slightly faster (~2%) and doesn't need 2 more registers
-    #[inline(always)]
-    fn read(ptr: GenericArray<&Self::Block, U2>) -> Self {
+    #[target_feature(enable = "avx2")]
+    fn read_impl(ptr: GenericArray<&[__m256i; 2], U2>) -> Self {
         unsafe {
             let [buf0_ab, buf0_dc] = *ptr[0];
             let [buf1_ab, buf1_dc] = *ptr[1];
@@ -425,8 +438,8 @@ impl Salsa20 for BlockAvx2Mb2 {
         }
     }
 
-    #[inline(always)]
-    fn write(&self, mut ptr: GenericArray<&mut Self::Block, U2>) {
+    #[target_feature(enable = "avx2")]
+    fn write_impl(&self, mut ptr: GenericArray<&mut [__m256i; 2], U2>) {
         unsafe {
             let a1b1 = _mm256_permute2x128_si256(self.a, self.b, 0b0011_0001);
             let d1c1 = _mm256_permute2x128_si256(self.d, self.c, 0b0011_0001);
@@ -448,8 +461,8 @@ impl Salsa20 for BlockAvx2Mb2 {
         }
     }
 
-    #[inline(always)]
-    fn keystream<const ROUND_PAIRS: usize>(&mut self) {
+    #[target_feature(enable = "avx2")]
+    fn keystream_impl<const ROUND_PAIRS: usize>(&mut self) {
         unsafe {
             if ROUND_PAIRS == 0 {
                 return;
@@ -468,6 +481,40 @@ impl Salsa20 for BlockAvx2Mb2 {
                 (self.b, self.d) = (self.d, self.b);
             }
         }
+    }
+}
+
+impl Salsa20 for BlockAvx2Mb2 {
+    type Lanes = U2;
+    type Block = [__m256i; 2];
+
+    #[inline(always)]
+    fn shuffle_in(ptr: &mut Align64<[u32; 16]>) {
+        unsafe {
+            BlockAvx2::shuffle_in_impl(ptr);
+        }
+    }
+
+    #[inline(always)]
+    fn shuffle_out(ptr: &mut Align64<[u32; 16]>) {
+        unsafe {
+            BlockAvx2::shuffle_out_impl(ptr);
+        }
+    }
+
+    #[inline(always)]
+    fn read(ptr: GenericArray<&Self::Block, U2>) -> Self {
+        unsafe { BlockAvx2Mb2::read_impl(ptr) }
+    }
+
+    #[inline(always)]
+    fn write(&self, mut ptr: GenericArray<&mut Self::Block, U2>) {
+        unsafe { BlockAvx2Mb2::write_impl(self, ptr) }
+    }
+
+    #[inline(always)]
+    fn keystream<const ROUND_PAIRS: usize>(&mut self) {
+        unsafe { BlockAvx2Mb2::keystream_impl::<ROUND_PAIRS>(self) }
     }
 }
 

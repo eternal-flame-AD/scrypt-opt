@@ -1,25 +1,38 @@
 [package]
 name = "scrypt-opt"
-description = "A pure-rust optimized scrypt implementation for moderate to high difficulty cases, with an AVX512VL intrinsics core and a portable-simd core."
+description = "A pure-rust optimized scrypt implementation for moderate to high difficulty cases, with AVX2 and AVX512 intrinsics cores and a portable-simd core."
 edition = "2024"
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+version = "0.1.0"
+documentation.workspace = true
+categories.workspace = true
+keywords.workspace = true
+
+[workspace]
+resolver = "3"
+members = ["scrypt-opt-derive"]
+
+[workspace.package]
 authors = ["Yumechi <yume@yumechi.jp>"]
 license = "Apache-2.0"
-version = "0.1.0"
-repository = "https://github.com/yumechi/scrypt-opt"
+repository = "https://github.com/eternal-flame-AD/scrypt-opt"
 documentation = "https://docs.rs/scrypt-opt"
 categories = ["cryptography", "cryptography::cryptocurrencies"]
 keywords = ["scrypt", "password-hashing", "proof-of-work", "mining"]
-
 
 [lib]
 crate-type = ["cdylib", "staticlib", "rlib"]
 
 [dependencies]
+scrypt-opt-derive = { path = "scrypt-opt-derive" }
 sha2 = { version = "0.10", default-features = false, features = ["compress"] }
 generic-array = { version = "1.2", default-features = false }
 core_affinity = { version = "0.8", optional = true }
 clap = { version = "4.5", features = ["derive"], optional = true }
 base64 = { version = "0.22", optional = true }
+multiversion = { version = "0.8.0", default-features = false }
 
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]

@@ -7,6 +7,14 @@ A pure-rust, permissively licensed, optimized scrypt implementation for moderate
 - Rust 1.85+ for general/AVX2 support, Rust 1.89+ for AVX512F support, nightly for portable-simd support
 - AVX2 is good, AVX512F is great (hand tuned, about 10% extra throughput), but at least a system with **256-bit SIMD** support with the "portable-simd" feature
 
+## Building Instructions
+
+General/AVX2 support does not need any special options. `-Ctarget-feature=+avx2` can squeeze ~3% more throughput by eliding the runtime dispatch.
+
+AVX-512 support requires a 1.89+ compiler and an explicit`-Ctarget-feature=+avx512f`, `-Ctarget-feature=+avx512vl` or an applicable `-Ctarget-cpu` flag.
+
+Portable-simd support requires a nightly compiler and `--features portable-simd` and an applicable `-Ctarget-cpu` flag.
+
 ## Applications
 
 - Flexible CPU-based Mining/Proof of Work (PoW) Infrastructure with intuitive pluggable API

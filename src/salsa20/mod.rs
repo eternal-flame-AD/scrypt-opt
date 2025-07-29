@@ -3,10 +3,7 @@
     reason = "APIs that allow switching cores in code are not exposed to the public API, yet"
 )]
 
-#[cfg(all(
-    target_arch = "x86_64",
-    any(target_feature = "avx2", target_feature = "avx512f")
-))]
+#[cfg(target_arch = "x86_64")]
 pub(crate) mod x86_64;
 
 use generic_array::{
@@ -89,14 +86,17 @@ pub trait BlockType: Clone + Copy {
 
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
 impl BlockType for core::arch::x86_64::__m512i {
+    #[inline(always)]
     unsafe fn read_from_ptr(ptr: *const Self) -> Self {
         use core::arch::x86_64::*;
         unsafe { _mm512_load_si512(ptr.cast::<__m512i>()) }
     }
+    #[inline(always)]
     unsafe fn write_to_ptr(self, ptr: *mut Self) {
         use core::arch::x86_64::*;
         unsafe { _mm512_store_si512(ptr.cast::<__m512i>(), self) }
     }
+    #[inline(always)]
     fn xor_with(&mut self, other: Self) {
         use core::arch::x86_64::*;
         unsafe {
@@ -105,24 +105,17 @@ impl BlockType for core::arch::x86_64::__m512i {
     }
 }
 
-#[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
+#[cfg(target_arch = "x86_64")]
 impl BlockType for [core::arch::x86_64::__m256i; 2] {
+    #[inline(always)]
     unsafe fn read_from_ptr(ptr: *const Self) -> Self {
-        use core::arch::x86_64::*;
-        unsafe {
-            [
-                _mm256_load_si256(ptr.cast::<__m256i>()),
-                _mm256_load_si256(ptr.cast::<__m256i>().add(1)),
-            ]
-        }
+        unsafe { core::ptr::read(ptr) }
     }
+    #[inline(always)]
     unsafe fn write_to_ptr(self, ptr: *mut Self) {
-        use core::arch::x86_64::*;
-        unsafe {
-            _mm256_store_si256(ptr.cast::<__m256i>(), self[0]);
-            _mm256_store_si256(ptr.cast::<__m256i>().add(1), self[1]);
-        }
+        unsafe { core::ptr::write(ptr, self) };
     }
+    #[inline(always)]
     fn xor_with(&mut self, other: Self) {
         use core::arch::x86_64::*;
         unsafe {
