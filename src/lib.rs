@@ -129,28 +129,52 @@ type Mul64<U> = UInt<Mul32<U>, B0>;
 type Mul128<U> = UInt<Mul64<U>, B0>;
 
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
-pub(crate) type DefaultEngine1 = salsa20::BlockAvx512F;
+pub(crate) type DefaultEngine1 = salsa20::x86_64::BlockAvx512F;
 #[cfg(all(
-    not(all(target_arch = "x86_64", target_feature = "avx512f")),
+    target_arch = "x86_64",
+    not(target_feature = "avx512f"),
+    target_feature = "avx2"
+))]
+pub(crate) type DefaultEngine1 = salsa20::x86_64::BlockAvx2;
+#[cfg(all(
+    not(all(
+        target_arch = "x86_64",
+        any(target_feature = "avx512f", target_feature = "avx2")
+    )),
     feature = "portable-simd"
 ))]
 pub(crate) type DefaultEngine1 = salsa20::BlockPortableSimd;
 #[cfg(all(
     not(feature = "portable-simd"),
-    not(all(target_arch = "x86_64", target_feature = "avx512f"))
+    not(all(
+        target_arch = "x86_64",
+        any(target_feature = "avx512f", target_feature = "avx2")
+    ))
 ))]
 pub(crate) type DefaultEngine1 = salsa20::BlockScalar<U1>;
 
 #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
-pub(crate) type DefaultEngine2 = salsa20::BlockAvx512F2;
+pub(crate) type DefaultEngine2 = salsa20::x86_64::BlockAvx512FMb2;
 #[cfg(all(
-    not(all(target_arch = "x86_64", target_feature = "avx512f")),
+    target_arch = "x86_64",
+    not(target_feature = "avx512f"),
+    target_feature = "avx2"
+))]
+pub(crate) type DefaultEngine2 = salsa20::x86_64::BlockAvx2Mb2;
+#[cfg(all(
+    not(all(
+        target_arch = "x86_64",
+        any(target_feature = "avx512f", target_feature = "avx2")
+    )),
     feature = "portable-simd"
 ))]
 pub(crate) type DefaultEngine2 = salsa20::BlockPortableSimd2;
 #[cfg(all(
     not(feature = "portable-simd"),
-    not(all(target_arch = "x86_64", target_feature = "avx512f"))
+    not(all(
+        target_arch = "x86_64",
+        any(target_feature = "avx512f", target_feature = "avx2")
+    ))
 ))]
 pub(crate) type DefaultEngine2 = salsa20::BlockScalar<U2>;
 
@@ -410,7 +434,7 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
         // If possible, redirect to the register resident implementation to avoid data access thrashing.
         #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
         if R::USIZE <= MAX_R_FOR_UNROLLING {
-            self.scrypt_ro_mix_ex_zmm::<salsa20::BlockAvx512F>();
+            self.scrypt_ro_mix_ex_zmm::<salsa20::x86_64::BlockAvx512F>();
             return;
         }
 
@@ -605,7 +629,7 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
         // If possible, steer to the register-resident AVX-512 implementation to avoid cache line thrashing.
         #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
         if R::USIZE <= MAX_R_FOR_UNROLLING {
-            self.scrypt_ro_mix_interleaved_ex_zmm::<salsa20::BlockAvx512F2>(other);
+            self.scrypt_ro_mix_interleaved_ex_zmm::<salsa20::x86_64::BlockAvx512FMb2>(other);
             return;
         }
 
@@ -1162,7 +1186,7 @@ mod tests {
         let mut buffers = BufferSet::<_, R>::new_boxed(CF.try_into().unwrap());
         buffers.set_input(&hmac, salt);
 
-        buffers.scrypt_ro_mix_ex_zmm::<salsa20::BlockAvx512F>();
+        buffers.scrypt_ro_mix_ex_zmm::<salsa20::x86_64::BlockAvx512F>();
 
         let mut output = [0u8; 64];
 
@@ -1425,7 +1449,9 @@ mod tests {
         buffers1.set_input(&hmacs[1], b"salt");
         buffers0.pipeline_start();
         for i in 2..16 {
-            buffers0.scrypt_ro_mix_interleaved_ex_zmm::<salsa20::BlockAvx512F2>(&mut buffers1);
+            buffers0.scrypt_ro_mix_interleaved_ex_zmm::<salsa20::x86_64::BlockAvx512FMb2>(
+                &mut buffers1,
+            );
             buffers0.extract_output(&hmacs[i - 2], &mut output);
             assert_eq!(output, expected[i - 2], "error at round {}", i);
             core::hint::black_box(&mut buffers0);

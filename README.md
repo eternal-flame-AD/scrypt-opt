@@ -1,11 +1,11 @@
 # scrypt-opt
 
-A pure-rust, permissively licensed, optimized scrypt implementation for moderate to high difficulty cases with an AVX-512 intrinsics core and a portable-simd core.
+A pure-rust, permissively licensed, optimized scrypt implementation for moderate to high difficulty cases with AVX2 and AVX-512 intrinsics core and a portable-simd core.
 
 ## System Requirements
 
-- Rust 1.89+ or nightly
-- AVX512F is great (hand tuned, about 10% extra throughput), but at least a system with **256-bit SIMD** support with the "portable-simd" feature
+- Rust 1.85+ for general/AVX2 support, Rust 1.89+ for AVX512F support, nightly for portable-simd support
+- AVX2 is good, AVX512F is great (hand tuned, about 10% extra throughput), but at least a system with **256-bit SIMD** support with the "portable-simd" feature
 
 ## Applications
 
@@ -101,39 +101,39 @@ Sample parameters for reference recommended/hardcoded by various sources:
 - RustCrypto KDF: N=131072 (17), R=8, P=1.
 - 💥PoW! Bot Deterrent: N=16384 (14), R=8, P=1, DF=5 is recommended, DF=7 is for desktop only use. For pps shift right by DF.
 
-Memory bandwidth can be approximated as $2 \times N \times 128 \times R$ bytes/s.
-
 Differences are computed against a native JtR build with AVX512VL enabled.
 
-| Host          | Threads | Program     | N (CF)      | R   | Throughput (c/s) |
-| ------------- | ------- | ----------- | ----------- | --- | ---------------- |
-| EPYC 9334     | 64      | scrypt-opt  | 1024  (10)  | 1   | 750894           |
-| EPYC 9334     | 64      | scrypt-opt  | 4096  (12)  | 8   | 20964            |
-| EPYC 9334     | 64      | scrypt-opt  | 8192  (13)  | 8   | 9458             |
-| EPYC 9334     | 64      | scrypt-opt  | 16384 (14)  | 8   | 4501 (+60.69%)   |
-| EPYC 9334     | 64      | john --test | 16384 (14)  | 8   | 2801             |
-| EPYC 9334     | 64      | scrypt-opt  | 32768 (15)  | 8   | 2202             |
-| EPYC 9334     | 64      | scrypt-opt  | 16384 (14)  | 16  | 2462             |
-| EPYC 9334     | 64      | scrypt-opt  | 65536 (16)  | 8   | 1084             |
-| EPYC 9334     | 64      | scrypt-opt  | 131072 (17) | 8   | 536  (+53.14%)   |
-| EPYC 9334     | 64      | john --mask | 131072 (17) | 8   | 350              |
-| Ryzen 9 7950X | *32*    | scrypt-opt  | 1024  (10)  | 1   | 439933           |
-| Ryzen 9 7950X | 16      | scrypt-opt  | 4096  (12)  | 8   | 6850             |
-| Ryzen 9 7950X | 16      | scrypt-opt  | 8192  (13)  | 8   | 2878             |
-| Ryzen 9 7950X | 16      | scrypt-opt  | 16384 (14)  | 8   | 1320 (+10.46%)   |
-| Ryzen 9 7950X | 32      | john --mask | 16384 (14)  | 8   | 1195             |
-| Ryzen 9 7950X | *32*    | scrypt-opt  | 16384 (14)  | 1   | 16226            |
-| Ryzen 9 7950X | 16      | scrypt-opt  | 32768 (15)  | 8   | 635  (+9.29%)    |
-| Ryzen 9 7950X | 32      | john --mask | 32768 (15)  | 8   | 581              |
-| Ryzen 9 7950X | 16      | scrypt-opt  | 16384 (14)  | 16  | 657  (+9.50%)    |
-| Ryzen 9 7950X | 32      | john --mask | 16384 (14)  | 16  | 600              |
-| Ryzen 9 7950X | 16      | scrypt-opt  | 131072 (17) | 8   | 150  (+8.70%)    |
-| Ryzen 9 7950X | 32      | john --mask | 131072 (17) | 8   | 138              |
-| i7-11370H     | 8       | scrypt-opt  | 1024  (10)  | 1   | 78920            |
-| i7-11370H     | 8       | scrypt-opt  | 16384 (14)  | 8   | 407              |
-| RS 4000 G11   | 12      | scrypt-opt  | 16384 (14)  | 8   | 740              |
-| RS 4000 G11   | 12      | scrypt-opt  | 16384 (14)  | 16  | 414              |
-| RS 4000 G11   | 12      | scrypt-opt  | 32768 (15)  | 8   | 355              |
+Memory traffic is approximated as $2 \times N \times 128 \times R$ bytes/s, effective utilization is computed by dividing by STREAM benchmark results. >100% results are possible for cache-bound workloads.
+
+| Host          | Threads | Program     | N (CF)      | R   | Thrpt. (c/s)   | Eff. B/W Utilization (%) |
+| ------------- | ------- | ----------- | ----------- | --- | -------------- | ------------------------ |
+| EPYC 9334     | 64      | scrypt-opt  | 1024  (10)  | 1   | 750894         | 157.47/195.91 (80.37%)   |
+| EPYC 9334     | 64      | scrypt-opt  | 4096  (12)  | 8   | 20964          |                          |
+| EPYC 9334     | 64      | scrypt-opt  | 8192  (13)  | 8   | 9458           |                          |
+| EPYC 9334     | 64      | scrypt-opt  | 16384 (14)  | 8   | 4501 (+60.69%) | 151.03/195.91 (77.09%)   |
+| EPYC 9334     | 64      | john --test | 16384 (14)  | 8   | 2801           |                          |
+| EPYC 9334     | 64      | scrypt-opt  | 32768 (15)  | 8   | 2202           |                          |
+| EPYC 9334     | 64      | scrypt-opt  | 16384 (14)  | 16  | 2462           |                          |
+| EPYC 9334     | 64      | scrypt-opt  | 65536 (16)  | 8   | 1084           |                          |
+| EPYC 9334     | 64      | scrypt-opt  | 131072 (17) | 8   | 536  (+53.14%) | 143.88/195.91 (73.44%)   |
+| EPYC 9334     | 64      | john --mask | 131072 (17) | 8   | 350            |                          |
+| Ryzen 9 7950X | *32*    | scrypt-opt  | 1024  (10)  | 1   | 439933         | 92.26/63.34 (145.66%)    |
+| Ryzen 9 7950X | 16      | scrypt-opt  | 4096  (12)  | 8   | 6850           |                          |
+| Ryzen 9 7950X | 16      | scrypt-opt  | 8192  (13)  | 8   | 2878           |                          |
+| Ryzen 9 7950X | 16      | scrypt-opt  | 16384 (14)  | 8   | 1320 (+10.46%) | 44.29/63.34 (69.93%)     |
+| Ryzen 9 7950X | 32      | john --mask | 16384 (14)  | 8   | 1195           |                          |
+| Ryzen 9 7950X | *32*    | scrypt-opt  | 16384 (14)  | 1   | 16226          |                          |
+| Ryzen 9 7950X | 16      | scrypt-opt  | 32768 (15)  | 8   | 635  (+9.29%)  | 42.61/63.34 (67.27%)     |
+| Ryzen 9 7950X | 32      | john --mask | 32768 (15)  | 8   | 581            |                          |
+| Ryzen 9 7950X | 16      | scrypt-opt  | 16384 (14)  | 16  | 657  (+9.50%)  | 44.09/63.34 (69.61%)     |
+| Ryzen 9 7950X | 32      | john --mask | 16384 (14)  | 16  | 600            |                          |
+| Ryzen 9 7950X | 16      | scrypt-opt  | 131072 (17) | 8   | 150  (+8.70%)  | 40.27/63.34 (63.57%)     |
+| Ryzen 9 7950X | 32      | john --mask | 131072 (17) | 8   | 138            |                          |
+| i7-11370H     | 8       | scrypt-opt  | 1024  (10)  | 1   | 78920          | 20.69/37.59 (55.05%)     |
+| i7-11370H     | 8       | scrypt-opt  | 16384 (14)  | 8   | 407            | 35.55/37.59 (94.58%)     |
+| RS 4000 G11   | 12      | scrypt-opt  | 16384 (14)  | 8   | 740            |                          |
+| RS 4000 G11   | 12      | scrypt-opt  | 16384 (14)  | 16  | 414            |                          |
+| RS 4000 G11   | 12      | scrypt-opt  | 32768 (15)  | 8   | 355            |                          |
 
 These machines only have 128-bit SIMD and tests were performed using a plain old scalar/auto-vectorized core.
 
