@@ -38,7 +38,6 @@ pub fn iterate<F: FnMut(&dyn Feature)>(mut f: F) {
     #[cfg(target_arch = "x86_64")]
     {
         f(&Avx2);
-        f(&Avx512F);
     }
 }
 
@@ -62,30 +61,12 @@ impl Feature for Avx2 {
     }
 
     fn check_volatile(&self) -> bool {
-        unsafe { core::arch::x86_64::__cpuid(7).ebx & (1 << 5) != 0 }
-    }
-}
-
-/// AVX-512F feature.
-#[cfg(target_arch = "x86_64")]
-#[derive(Default)]
-pub struct Avx512F;
-
-#[cfg(target_arch = "x86_64")]
-impl Feature for Avx512F {
-    fn name(&self) -> &'static str {
-        "avx512f"
-    }
-    fn required(&self) -> bool {
-        cfg!(target_feature = "avx512f")
-    }
-
-    fn vector_length(&self) -> usize {
-        64
-    }
-
-    fn check_volatile(&self) -> bool {
-        unsafe { core::arch::x86_64::__cpuid(7).ebx & (1 << 16) != 0 }
+        #[cfg(not(feature = "std"))]
+        unsafe {
+            core::arch::x86_64::__cpuid(7).ebx & (1 << 5) != 0
+        }
+        #[cfg(feature = "std")]
+        std::arch::is_x86_feature_detected!("avx2")
     }
 }
 
@@ -104,23 +85,6 @@ mod tests {
             assert_eq!(
                 Avx2.check_volatile(),
                 std::arch::is_x86_feature_detected!("avx2")
-            );
-        }
-    }
-
-    #[test]
-    #[cfg(target_arch = "x86_64")]
-    fn test_avx512f() {
-        if !cfg!(target_feature = "avx512f") {
-            assert_eq!(
-                Avx512F.check(),
-                std::arch::is_x86_feature_detected!("avx512f")
-            );
-        } else {
-            assert!(Avx512F.check());
-            assert_eq!(
-                Avx512F.check_volatile(),
-                std::arch::is_x86_feature_detected!("avx512f")
             );
         }
     }
