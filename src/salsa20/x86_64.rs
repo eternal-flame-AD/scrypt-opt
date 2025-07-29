@@ -147,10 +147,10 @@ impl Salsa20 for BlockAvx512F {
                 // any quarter-round transformations, so we apply these
                 // shuffles to simulate the effect of a no-op transformation
                 // and ensure compatibility with downstream processing.
-                let newd = _mm_shuffle_epi32(self.b, 0b10_01_00_11);
+                self.b = _mm_shuffle_epi32(self.b, 0b10_01_00_11);
                 self.c = _mm_shuffle_epi32(self.c, 0b01_00_11_10);
-                self.b = _mm_shuffle_epi32(self.d, 0b00_11_10_01);
-                self.d = newd;
+                self.d = _mm_shuffle_epi32(self.d, 0b00_11_10_01);
+                (self.b, self.d) = (self.d, self.b);
                 return;
             }
 
@@ -351,10 +351,10 @@ impl Salsa20 for BlockAvx512FMb2 {
                 // state variables (self.b, self.c, self.d) are shuffled in a specific way
                 // to maintain consistency or prepare for subsequent operations. This is
                 // necessary for correctness but does not contribute to the core algorithm.
-                let newd = _mm256_shuffle_epi32(self.b, 0b10_01_00_11);
+                self.b = _mm256_shuffle_epi32(self.b, 0b10_01_00_11);
                 self.c = _mm256_shuffle_epi32(self.c, 0b01_00_11_10);
-                self.b = _mm256_shuffle_epi32(self.d, 0b00_11_10_01);
-                self.d = newd;
+                self.d = _mm256_shuffle_epi32(self.d, 0b00_11_10_01);
+                (self.b, self.d) = (self.d, self.b);
 
                 return;
             }
