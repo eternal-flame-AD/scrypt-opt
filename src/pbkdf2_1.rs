@@ -1,6 +1,6 @@
 use generic_array::{
     ArrayLength, GenericArray,
-    typenum::{IsLess, NonZero, U8, U16, U32, Unsigned},
+    typenum::{IsLess, NonZero, U32, Unsigned},
 };
 use sha2::{
     Digest, digest::crypto_common, digest::generic_array as rc_generic_array,
@@ -165,6 +165,7 @@ impl Pbkdf2HmacSha256State {
     /// Extract 8 bytes from the HMAC-SHA256 output of the salts at a specific byte offset.
     ///
     /// This is useful for fast proof of work computation.
+    #[inline(always)]
     pub fn partial_gather<R: ArrayLength + NonZero, T: AsRef<Align64<Block<R>>>>(
         &self,
         salts: impl IntoIterator<Item = T>,
@@ -193,29 +194,24 @@ impl Pbkdf2HmacSha256State {
         let i0 = offset / 32;
         let offset0 = offset % 32;
 
-        let mut tmp_block_inner = crypto_common::Block::<sha2::Sha256>::default();
-        tmp_block_inner[..4].copy_from_slice(&((i0 as u32) + 1).to_be_bytes());
-        tmp_block_inner[4] = 0x80;
-        tmp_block_inner[(64 - 8)..].copy_from_slice(&(count_blocks * 512 + 32).to_be_bytes());
+        let mut tmp_block_inner = [crypto_common::Block::<sha2::Sha256>::default()];
+        tmp_block_inner[0][..4].copy_from_slice(&((i0 as u32) + 1).to_be_bytes());
+        tmp_block_inner[0][4] = 0x80;
+        tmp_block_inner[0][(64 - 8)..].copy_from_slice(&(count_blocks * 512 + 32).to_be_bytes());
 
-        let mut tmp_block_outer = GenericArray::<u32, U16>::default();
-        tmp_block_outer[8] = u32::from_ne_bytes([0x80, 0, 0, 0]);
-        tmp_block_outer[15] = u32::from_ne_bytes([0, 0, 3, 0]);
+        let mut tmp_block_outer = [crypto_common::Block::<sha2::Sha256>::default()];
+        tmp_block_outer[0][32] = 0x80;
+        tmp_block_outer[0][62] = 0x03;
 
         let mut inner_hash0 = inner_digest_prefix;
-        sha2::compress256(&mut inner_hash0, &[tmp_block_inner]);
+        sha2::compress256(&mut inner_hash0, &tmp_block_inner);
 
         for i in 0..8 {
-            tmp_block_outer[i] = u32::from_ne_bytes(inner_hash0[i].to_be_bytes());
+            tmp_block_outer[0][i * 4..][..4].copy_from_slice(&inner_hash0[i].to_be_bytes());
         }
 
         let mut outer_hash0 = self.outer_digest_words;
-        sha2::compress256(
-            &mut outer_hash0,
-            &[unsafe {
-                core::mem::transmute::<_, crypto_common::Block<sha2::Sha256>>(tmp_block_outer)
-            }],
-        );
+        sha2::compress256(&mut outer_hash0, &tmp_block_outer);
 
         let outer_hash_0_bytes = unsafe { core::mem::transmute::<[u32; 8], [u8; 32]>(outer_hash0) };
 
@@ -233,21 +229,16 @@ impl Pbkdf2HmacSha256State {
             return;
         }
 
-        tmp_block_inner[..4].copy_from_slice(&((i0 as u32) + 2).to_be_bytes());
+        tmp_block_inner[0][..4].copy_from_slice(&((i0 as u32) + 2).to_be_bytes());
         let mut inner_hash1 = inner_digest_prefix;
-        sha2::compress256(&mut inner_hash1, &[tmp_block_inner]);
+        sha2::compress256(&mut inner_hash1, &tmp_block_inner);
 
         for i in 0..8 {
-            tmp_block_outer[i] = u32::from_ne_bytes(inner_hash1[i].to_be_bytes());
+            tmp_block_outer[0][i * 4..][..4].copy_from_slice(&inner_hash1[i].to_be_bytes());
         }
 
         outer_hash0 = self.outer_digest_words;
-        sha2::compress256(
-            &mut outer_hash0,
-            &[unsafe {
-                core::mem::transmute::<_, crypto_common::Block<sha2::Sha256>>(tmp_block_outer)
-            }],
-        );
+        sha2::compress256(&mut outer_hash0, &tmp_block_outer);
 
         let outer_hash_1_bytes = unsafe { core::mem::transmute::<[u32; 8], [u8; 32]>(outer_hash0) };
 
@@ -288,39 +279,34 @@ impl Pbkdf2HmacSha256State {
             sha2::compress256(&mut inner_digest_prefix, blocks);
         }
 
-        let mut tmp_block_inner = crypto_common::Block::<sha2::Sha256>::default();
-        tmp_block_inner[4] = 0x80;
-        tmp_block_inner[(64 - 8)..].copy_from_slice(&(count_blocks * 512 + 32).to_be_bytes());
+        let mut tmp_block_inner = [crypto_common::Block::<sha2::Sha256>::default()];
+        tmp_block_inner[0][4] = 0x80;
+        tmp_block_inner[0][(64 - 8)..].copy_from_slice(&(count_blocks * 512 + 32).to_be_bytes());
 
-        let mut tmp_block_outer = GenericArray::<u32, U16>::default();
-        tmp_block_outer[8] = u32::from_ne_bytes([0x80, 0, 0, 0]);
-        tmp_block_outer[15] = u32::from_ne_bytes([0, 0, 3, 0]);
+        let mut tmp_block_outer = [crypto_common::Block::<sha2::Sha256>::default()];
+        tmp_block_outer[0][32] = 0x80;
+        tmp_block_outer[0][62] = 0x03;
 
         for (i, block) in output.chunks_mut(32).enumerate() {
-            let mut tmp = GenericArray::<u32, U8>::default();
             let idx = (i as u32 + 1).to_be_bytes();
             let mut inner_hash = inner_digest_prefix;
 
-            tmp_block_inner[..4].copy_from_slice(&idx);
-            sha2::compress256(&mut inner_hash, &[tmp_block_inner]);
+            tmp_block_inner[0][..4].copy_from_slice(&idx);
+            sha2::compress256(&mut inner_hash, &tmp_block_inner);
 
             for i in 0..8 {
-                tmp_block_outer[i] = u32::from_ne_bytes(inner_hash[i].to_be_bytes());
+                tmp_block_outer[0][i * 4..][..4].copy_from_slice(&inner_hash[i].to_be_bytes());
             }
 
             let mut outer_hash = self.outer_digest_words;
-            sha2::compress256(
-                &mut outer_hash,
-                &[unsafe {
-                    core::mem::transmute::<_, crypto_common::Block<sha2::Sha256>>(tmp_block_outer)
-                }],
-            );
+            sha2::compress256(&mut outer_hash, &tmp_block_outer);
+            #[cfg(target_endian = "little")]
             for i in 0..8 {
-                tmp[i] = u32::from_ne_bytes(outer_hash[i].to_be_bytes());
+                outer_hash[i] = outer_hash[i].swap_bytes();
             }
             unsafe {
                 block.copy_from_slice(&core::slice::from_raw_parts(
-                    tmp.as_ptr() as *const u8,
+                    outer_hash.as_ptr() as *const u8,
                     block.len(),
                 ));
             }
@@ -341,9 +327,9 @@ impl Pbkdf2HmacSha256State {
             prev_blocks: 1,
         };
         inner_digest.update(salt);
-        let mut tmp_block_outer = GenericArray::<u32, U16>::default();
-        tmp_block_outer[8] = u32::from_ne_bytes([0x80, 0, 0, 0]);
-        tmp_block_outer[15] = u32::from_ne_bytes([0, 0, 3, 0]);
+        let mut tmp_block_outer = [crypto_common::Block::<sha2::Sha256>::default()];
+        tmp_block_outer[0][32] = 0x80;
+        tmp_block_outer[0][62] = 0x03;
 
         let mut idx = 0u32;
         for mut output in output {
@@ -373,14 +359,7 @@ impl Pbkdf2HmacSha256State {
 
                 let mut outer_hash = self.outer_digest_words;
 
-                sha2::compress256(
-                    &mut outer_hash,
-                    &[unsafe {
-                        core::mem::transmute::<_, crypto_common::Block<sha2::Sha256>>(
-                            tmp_block_outer,
-                        )
-                    }],
-                );
+                sha2::compress256(&mut outer_hash, &tmp_block_outer);
 
                 repeat8!(k, {
                     // SAFETY: aligned to 64 bytes by type constraint

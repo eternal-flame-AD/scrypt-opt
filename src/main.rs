@@ -17,7 +17,8 @@ use scrypt_opt::{
     pbkdf2_1::Pbkdf2HmacSha256State,
     pipeline::PipelineContext,
     self_test::{
-        Case, CaseP1, CastN16R1P1, CastN1024R1P2, CastN1024R8P16, CastN16384R8P1, CastN1048576R8P1,
+        Case, CaseN16R1P1, CaseN1024R1P2, CaseN1024R8P16, CaseN1024R53P1, CaseN1024R53P3,
+        CaseN16384R8P1, CaseN1048576R8P1, CaseP1,
     },
 };
 
@@ -280,7 +281,7 @@ fn pow<R: ArrayLength + NonZero + Send + Sync>(
     target: u64,
     num_threads: NonZeroU32,
     offset: usize,
-    output: Box<[u8]>,
+    output_len: usize,
     nonce_len: usize,
     #[cfg(feature = "core_affinity")] core_stride: NonZeroUsize,
 ) -> Option<PowResult> {
@@ -299,7 +300,6 @@ fn pow<R: ArrayLength + NonZero + Send + Sync>(
     } else {
         (1 << (nonce_len * 8)) - 1
     };
-    let output_len = output.len();
 
     struct State<R: ArrayLength + NonZero + Send + Sync> {
         salt: Box<[u8]>,
@@ -322,7 +322,7 @@ fn pow<R: ArrayLength + NonZero + Send + Sync>(
         offset,
         stop_signal: AtomicBool::new(false),
         retired_count: AtomicU64::new(0),
-        solved_mutex: Mutex::new((output, NOT_A_SOLUTION)),
+        solved_mutex: Mutex::new((vec![0u8; output_len].into_boxed_slice(), NOT_A_SOLUTION)),
         _marker: PhantomData,
     };
 
@@ -489,17 +489,22 @@ fn cast(fast: bool) {
         }};
     }
 
-    case!("16/1/1", { CastN16R1P1::algorithm_self_test() });
-    case!("16/1/1 (pipeline)", { CastN16R1P1::pipeline_api_test() });
-    case!("1024/1/2", { CastN1024R1P2::algorithm_self_test() });
-    case!("1024/8/16", { CastN1024R8P16::algorithm_self_test() });
+    case!("16/1/1", { CaseN16R1P1::algorithm_self_test() });
+    case!("16/1/1 (pipeline)", { CaseN16R1P1::pipeline_api_test() });
+    case!("1024/1/2", { CaseN1024R1P2::algorithm_self_test() });
+    case!("1024/8/16", { CaseN1024R8P16::algorithm_self_test() });
+    case!("1024/53/1", { CaseN1024R53P1::algorithm_self_test() });
+    case!("1024/53/1 (pipeline)", {
+        CaseN1024R53P1::pipeline_api_test()
+    });
+    case!("1024/53/3", { CaseN1024R53P3::algorithm_self_test() });
 
     if !fast {
-        case!("16384/8/1", { CastN16384R8P1::algorithm_self_test() });
+        case!("16384/8/1", { CaseN16384R8P1::algorithm_self_test() });
         case!("16384/8/1 (pipeline)", {
-            CastN16384R8P1::pipeline_api_test()
+            CaseN16384R8P1::pipeline_api_test()
         });
-        case!("1048576/8/1", { CastN1048576R8P1::algorithm_self_test() });
+        case!("1048576/8/1", { CaseN1048576R8P1::algorithm_self_test() });
     }
 
     println!("------ PASSED ALL TESTS ------");
@@ -806,8 +811,6 @@ fn main() {
                 .or_else(|_| GeneralPurpose::new(&base64::alphabet::STANDARD, config).decode(salt))
                 .expect("invalid salt, should be base64 encoded");
 
-            let output = vec![0; output_len].into_boxed_slice();
-
             let estimated_cs = target_mask.get().div_ceil(target_u64 + 1) / 2;
             if !quiet {
                 eprintln!(
@@ -824,7 +827,7 @@ fn main() {
                     target_u64,
                     num_threads,
                     byte_offset,
-                    output,
+                    output_len,
                     nonce_len,
                     #[cfg(feature = "core_affinity")]
                     core_stride,

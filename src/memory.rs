@@ -6,7 +6,7 @@ use core::ops::{Deref, DerefMut};
 pub struct Align64<T>(pub T);
 
 impl<T> Align64<T> {
-    /// Perform a reference cast to an Align64<Block<R>> without checking the alignment.
+    /// Perform a reference cast to an [`Align64<Block<R>>`] without checking the alignment.
     ///
     /// # Safety
     /// This function is unsafe because it does not check the alignment of the input pointer.
@@ -15,7 +15,7 @@ impl<T> Align64<T> {
         unsafe { &*(input as *const T as *const Self) }
     }
 
-    /// Perform a reference cast to an Align64<Block<R>>.
+    /// Perform a reference cast to an [`Align64<Block<R>>`].
     ///
     /// # Panics
     ///
@@ -30,7 +30,7 @@ impl<T> Align64<T> {
         unsafe { Self::new_unchecked(input) }
     }
 
-    /// Perform a mutable reference cast to an Align64<Block<R>> without checking the alignment.
+    /// Perform a mutable reference cast to an [`Align64<Block<R>>`] without checking the alignment.
     ///
     /// # Safety
     /// This function is unsafe because it does not check the alignment of the input pointer.
@@ -39,7 +39,7 @@ impl<T> Align64<T> {
         unsafe { &mut *(input as *mut T as *mut Self) }
     }
 
-    /// Perform a mutable reference cast to an Align64<Block<R>>.
+    /// Perform a mutable reference cast to an [`Align64<Block<R>>`].
     ///
     /// # Panics
     ///

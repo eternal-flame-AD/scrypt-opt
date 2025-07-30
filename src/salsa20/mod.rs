@@ -151,7 +151,7 @@ impl BlockType for core::simd::u32x16 {
 }
 
 /// A trait for salsa20 block types
-pub(crate) trait Salsa20 {
+pub trait Salsa20 {
     /// The number of lanes
     type Lanes: ArrayLength;
     /// The block type
@@ -166,6 +166,8 @@ pub(crate) trait Salsa20 {
     /// Read block(s)
     fn read(ptr: GenericArray<&Self::Block, Self::Lanes>) -> Self;
     /// Write block(s) back
+    ///
+    /// The original/saved value must be present in the pointer.
     fn write(&self, ptr: GenericArray<&mut Self::Block, Self::Lanes>);
     /// Apply the keystream to the block(s)
     fn keystream<const ROUND_PAIRS: usize>(&mut self);

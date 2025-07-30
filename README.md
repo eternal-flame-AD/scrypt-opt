@@ -77,9 +77,9 @@ These APIs facilitate these:
 - `Block<R>` represents a salsa20 (512-bit) block in u8 form.
 - `BufferSet::new`, `BufferSet::new_boxed`,  `BufferSet::new_maybe_huge_slice` create a new buffer set using an existing buffer or a new heap or huge page backed buffer. `BufferSet::minimum_blocks` returns the minimum number of blocks required to be allocated for a given Cost Factor (log2(N)).
 - `BufferSet::scrypt_ro_mix` performs the $RoMix_{Front}$ and then $RoMix_{Back}$ operation serially.
-- `BufferSet::pipeline_start` performs the $RoMix_{Front}$ operation.
-- `BufferSet::pipeline_drain` performs the $RoMix_{Back}$ operation.
-- `BufferSet::scrypt_ro_mix_interleaved` takes an auxiliary buffer set and performs the $RoMix_{Back}$ operation on _Self_ and $RoMix_{Front}$ on the auxiliary buffer set.
+- `BufferSet::ro_mix_front` performs the $RoMix_{Front}$ operation.
+- `BufferSet::ro_mix_back` performs the $RoMix_{Back}$ operation.
+- `BufferSet::ro_mix_interleaved` takes an auxiliary buffer set and performs the $RoMix_{Back}$ operation on _Self_ and $RoMix_{Front}$ on the auxiliary buffer set.
 - `BufferSet::pipeline` is a convenience method that takes an iterator implementing `PipelineContext` trait and performs the pipeline by calling into `PipelineContext::begin` and `PipelineContext::drain` at appropriate times. `PipelineContext` is already implemented for `(&'a Align64<Block<R>>, &'b mut Align64<Block<R>>)`, which simplifies the pipelining for computing hashes with a large $P$ (see [examples/large_p.rs](examples/large_p.rs)).
 - `Pbkdf2HmacSha256State` stores the internal state of the HMAC-SHA-256 operation (512-bit, copyable)
 - `Pbkdf2HmacSha256State::new` and `Pbkdf2HmacSha256State::new_short` create a new state from a password.
@@ -173,7 +173,7 @@ WASM tests are performed on Chromium 138.0.7204.157, worker message passing over
 
 ## Usage Example
 
-See [examples](examples) for usage examples.
+See [examples](examples/) for usage examples.
 
 ## Strategy Overview
 

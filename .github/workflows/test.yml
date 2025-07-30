@@ -54,7 +54,7 @@ jobs:
         run: RUSTFLAGS="-C target-cpu=native" cargo build --features "bin portable-simd"
 
       - name: Run tests (portable-simd)
-        run: RUSTFLAGS="-C target-cpu=native" cargo test --features portable-simd
+        run: RUSTFLAGS="-C target-cpu=native" cargo test --features "std portable-simd"
 
       - name: Run tests (portable-simd example)
         run: RUSTFLAGS="-C target-cpu=native" cargo test --features portable-simd --examples
