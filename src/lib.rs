@@ -437,19 +437,6 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
         ))
     }
 
-    /// Perform the RoMix operation using the default engine.
-    pub fn scrypt_ro_mix(&mut self) {
-        // If possible, redirect to the register resident implementation to avoid data access thrashing.
-        #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
-        if R::USIZE <= MAX_R_FOR_UNROLLING {
-            self.scrypt_ro_mix_ex_zmm::<salsa20::x86_64::BlockAvx512F>();
-            return;
-        }
-
-        self.pipeline_start_ex::<DefaultEngine1>();
-        self.pipeline_drain_ex::<DefaultEngine1>();
-    }
-
     /// Start an interleaved pipeline.
     #[cfg_attr(
         all(target_arch = "x86_64", not(target_feature = "avx2")),
@@ -660,6 +647,30 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
         self.pipeline_drain_ex::<DefaultEngine1>();
     }
 
+    /// Perform the RoMix operation using the default engine.
+    pub fn scrypt_ro_mix(&mut self) {
+        // If possible, redirect to the register resident implementation to avoid data access thrashing.
+        #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+        if R::USIZE <= MAX_R_FOR_UNROLLING {
+            self.scrypt_ro_mix_ex_zmm::<salsa20::x86_64::BlockAvx512F>();
+            return;
+        }
+
+        #[cfg(all(not(test), target_arch = "x86_64", not(target_feature = "avx2")))]
+        {
+            if features::Avx2.check() {
+                unsafe {
+                    self.pipeline_start_ex_avx2::<crate::salsa20::x86_64::BlockAvx2>();
+                    self.pipeline_drain_ex_avx2::<crate::salsa20::x86_64::BlockAvx2>();
+                }
+                return;
+            }
+        }
+
+        self.pipeline_start_ex::<DefaultEngine1>();
+        self.pipeline_drain_ex::<DefaultEngine1>();
+    }
+
     /// Perform the RoMix operation with interleaved buffers.
     ///
     /// $RoMix_{Back}$ is performed on self and $RoMix_{Front}$ is performed on other.
@@ -709,6 +720,35 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
             return input_m2.drain(state, buffers0);
         };
         input_m1.begin(state, buffers1);
+
+        #[cfg(all(not(test), target_arch = "x86_64", not(target_feature = "avx2")))]
+        {
+            if features::Avx2.check() {
+                unsafe {
+                    buffers0.pipeline_start_ex_avx2::<crate::salsa20::x86_64::BlockAvx2>();
+                    loop {
+                        buffers0.scrypt_ro_mix_interleaved_ex_avx2::<crate::salsa20::x86_64::BlockAvx2Mb2>(buffers1);
+                        if let Some(k) = input_m2.drain(state, buffers0) {
+                            return Some(k);
+                        }
+
+                        (buffers0, buffers1) = (buffers1, buffers0);
+
+                        let Some(mut input) = iter.next() else {
+                            break;
+                        };
+
+                        input.begin(state, buffers1);
+
+                        input_m2 = input_m1;
+                        input_m1 = input;
+                    }
+                    buffers0.pipeline_drain_ex_avx2::<crate::salsa20::x86_64::BlockAvx2>();
+                    return input_m1.drain(state, buffers0);
+                }
+            }
+        }
+
         buffers0.pipeline_start();
         loop {
             buffers0.scrypt_ro_mix_interleaved(buffers1);

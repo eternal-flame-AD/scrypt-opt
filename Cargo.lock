@@ -667,6 +667,7 @@ dependencies = [
  "base64",
  "clap",
  "core_affinity",
+ "cpufeatures",
  "criterion",
  "generic-array 1.2.0",
  "hmac",

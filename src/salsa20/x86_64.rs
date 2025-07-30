@@ -180,7 +180,8 @@ pub struct BlockAvx2 {
 }
 
 impl BlockAvx2 {
-    #[target_feature(enable = "avx2")]
+    #[cfg_attr(target_feature = "avx2", inline(always))]
+    #[cfg_attr(not(target_feature = "avx2"), target_feature(enable = "avx2"))]
     fn shuffle_in_impl(ptr: &mut Align64<[u32; 16]>) {
         unsafe {
             let tmp = ptr.clone();
@@ -190,7 +191,8 @@ impl BlockAvx2 {
         }
     }
 
-    #[target_feature(enable = "avx2")]
+    #[cfg_attr(target_feature = "avx2", inline(always))]
+    #[cfg_attr(not(target_feature = "avx2"), target_feature(enable = "avx2"))]
     fn shuffle_out_impl(ptr: &mut Align64<[u32; 16]>) {
         unsafe {
             let tmp = ptr.clone();
@@ -200,7 +202,8 @@ impl BlockAvx2 {
         }
     }
 
-    #[target_feature(enable = "avx2")]
+    #[cfg_attr(target_feature = "avx2", inline(always))]
+    #[cfg_attr(not(target_feature = "avx2"), target_feature(enable = "avx2"))]
     fn read_impl(ptr: GenericArray<&[__m256i; 2], U1>) -> Self {
         unsafe {
             let [ab, dc] = *ptr[0];
@@ -213,7 +216,8 @@ impl BlockAvx2 {
         }
     }
 
-    #[target_feature(enable = "avx2")]
+    #[cfg_attr(target_feature = "avx2", inline(always))]
+    #[cfg_attr(not(target_feature = "avx2"), target_feature(enable = "avx2"))]
     fn write_impl(&self, mut ptr: GenericArray<&mut [__m256i; 2], U1>) {
         unsafe {
             let ab = _mm256_setr_m128i(self.a, self.b);
@@ -223,7 +227,8 @@ impl BlockAvx2 {
         }
     }
 
-    #[target_feature(enable = "avx2")]
+    #[cfg_attr(target_feature = "avx2", inline(always))]
+    #[cfg_attr(not(target_feature = "avx2"), target_feature(enable = "avx2"))]
     fn keystream_impl<const ROUND_PAIRS: usize>(&mut self) {
         unsafe {
             if ROUND_PAIRS == 0 {
@@ -415,7 +420,8 @@ pub struct BlockAvx2Mb2 {
 
 impl BlockAvx2Mb2 {
     // this is a more ILP version that is slightly faster (~2%) and doesn't need 2 more registers
-    #[target_feature(enable = "avx2")]
+    #[cfg_attr(target_feature = "avx2", inline(always))]
+    #[cfg_attr(not(target_feature = "avx2"), target_feature(enable = "avx2"))]
     fn read_impl(ptr: GenericArray<&[__m256i; 2], U2>) -> Self {
         unsafe {
             let [buf0_ab, buf0_dc] = *ptr[0];
@@ -438,7 +444,8 @@ impl BlockAvx2Mb2 {
         }
     }
 
-    #[target_feature(enable = "avx2")]
+    #[cfg_attr(target_feature = "avx2", inline(always))]
+    #[cfg_attr(not(target_feature = "avx2"), target_feature(enable = "avx2"))]
     fn write_impl(&self, mut ptr: GenericArray<&mut [__m256i; 2], U2>) {
         unsafe {
             let a1b1 = _mm256_permute2x128_si256(self.a, self.b, 0b0011_0001);
@@ -461,7 +468,8 @@ impl BlockAvx2Mb2 {
         }
     }
 
-    #[target_feature(enable = "avx2")]
+    #[cfg_attr(target_feature = "avx2", inline(always))]
+    #[cfg_attr(not(target_feature = "avx2"), target_feature(enable = "avx2"))]
     fn keystream_impl<const ROUND_PAIRS: usize>(&mut self) {
         unsafe {
             if ROUND_PAIRS == 0 {
