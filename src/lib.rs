@@ -1029,7 +1029,7 @@ impl<'a, R: ArrayLength, B: BlockType> ScryptBlockMixOutput<'a, R, B>
 {
     #[inline(always)]
     fn store_even(&mut self, word_idx: usize, value: B) {
-        debug_assert!(word_idx * 64 < self.len());
+        debug_assert!(word_idx * 64 < self.len() / 2);
         unsafe { B::write_to_ptr(value, self.as_mut_ptr().add(word_idx * 64).cast()) }
     }
     #[inline(always)]

@@ -16,6 +16,7 @@ const IV: [u32; 8] = [
 const OPAD: u8 = 0x5c;
 const IPAD: u8 = 0x36;
 
+#[cfg_attr(target_endian = "big", expect(unused))]
 const FLIP_DWORD_BYTE_ORDER: [usize; 32] = [
     3, 2, 1, 0, 7, 6, 5, 4, 11, 10, 9, 8, 15, 14, 13, 12, 19, 18, 17, 16, 23, 22, 21, 20, 27, 26,
     25, 24, 31, 30, 29, 28,
