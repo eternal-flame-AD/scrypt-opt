@@ -10,7 +10,7 @@ env:
   CARGO_TERM_COLOR: always
   FEATURE_SET_LIB: std portable-simd
   FEATURE_SET_BIN: bin portable-simd core_affinity huge-page
-  TARGET_MCPUS: skylake skylake-avx512 sapphirerapids znver4
+  TARGET_MCPUS: haswell skylake skylake-avx512 sapphirerapids znver4
 
 jobs:
   build:

@@ -1,0 +1,13 @@
+[package]
+name = "scrypt-opt-derive"
+version = "0.1.0"
+edition = "2024"
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Internal proc-macro crate for scrypt-opt"
+
+[lib]
+proc-macro = true
+
+[dependencies]

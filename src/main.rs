@@ -78,6 +78,7 @@ macro_rules! match_r {
 
 #[derive(clap::Subcommand)]
 enum Command {
+    Info,
     Cast {
         #[arg(short, long)]
         fast: bool,
@@ -676,6 +677,18 @@ fn main() {
     #[cfg(feature = "core_affinity")]
     let core_stride = args.core_stride;
     match args.command {
+        Command::Info => {
+            println!("Target: {}", std::env::consts::ARCH);
+            println!("Features:");
+            scrypt_opt::features::iterate(|f| {
+                println!(
+                    "{}: compile-time: {}, runtime: {}",
+                    f.name(),
+                    f.required(),
+                    f.check()
+                );
+            });
+        }
         Command::Cast { fast } => cast(fast),
         Command::Compute {
             key,
