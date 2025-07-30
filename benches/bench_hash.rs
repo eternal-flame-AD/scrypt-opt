@@ -17,18 +17,14 @@ fn bench_scrypt(c: &mut Criterion) {
 
     const CFS: [NonZeroU8; 2] = [NonZeroU8::new(14).unwrap(), NonZeroU8::new(16).unwrap()];
 
-    let max_minimum_blocks =
-        scrypt_opt::BufferSet::<&mut [Align64<scrypt_opt::Block<R>>], R>::minimum_blocks(
-            *CFS.iter().max().unwrap(),
-        );
+    let max_minimum_blocks = scrypt_opt::minimum_blocks(*CFS.iter().max().unwrap());
     let mut alloc = scrypt_opt::memory::MaybeHugeSlice::<Align64<scrypt_opt::Block<R>>>::new(
         max_minimum_blocks * 2,
     )
     .0;
 
     for cf in CFS {
-        let minimum_blocks =
-            scrypt_opt::BufferSet::<&mut [Align64<scrypt_opt::Block<R>>], R>::minimum_blocks(cf);
+        let minimum_blocks = scrypt_opt::minimum_blocks(cf);
 
         group.bench_function(format!("{}/8/1", 1u32 << cf.get()), |b| {
             let mut buffers0 = scrypt_opt::BufferSet::<_, R>::new(unsafe {

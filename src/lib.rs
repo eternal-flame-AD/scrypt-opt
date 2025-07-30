@@ -27,6 +27,28 @@ macro_rules! repeat8 {
     }};
 }
 
+macro_rules! integerify {
+    (<$r:ty> $x:expr) => {{
+        let input: &crate::Block<R> = $x;
+
+        debug_assert_eq!(
+            input.as_ptr().align_offset(64),
+            0,
+            "unexpected input alignment"
+        );
+        debug_assert_eq!(input.len(), Mul128::<R>::USIZE, "unexpected input length");
+        #[allow(unused_unsafe)]
+        unsafe {
+            input
+                .as_ptr()
+                .cast::<u8>()
+                .add(Mul128::<R>::USIZE - 64)
+                .cast::<u32>()
+                .read() as usize
+        }
+    }};
+}
+
 #[rustfmt::skip]
 macro_rules! match_r {
     ($r:expr, $b:ident, $c:block) => {{
@@ -223,12 +245,10 @@ impl_valid_cost_factor!(
 );
 
 /// The type for one block for scrypt BlockMix operation (128 bytes/1R)
-pub type Block<R> = GenericArray<u32, Mul32<R>>;
-
-/// The type for one block for scrypt BlockMix operation (128 bytes/1R) as a u8 array
-pub type BlockU8<R> = GenericArray<u8, Mul128<R>>;
+pub type Block<R> = GenericArray<u8, Mul128<R>>;
 
 #[derive(Debug, Clone, Copy)]
+#[repr(transparent)]
 /// A set of buffers to do a single scrypt operation
 pub struct BufferSet<
     Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>,
@@ -269,7 +289,7 @@ impl<R: ArrayLength + NonZero> BufferSet<alloc::vec::Vec<Align64<Block<R>>>, R> 
     #[inline(always)]
     pub fn new_boxed(cf: core::num::NonZeroU8) -> alloc::boxed::Box<Self> {
         let mut v = alloc::vec::Vec::new();
-        v.resize(Self::minimum_blocks(cf), Align64::<Block<R>>::default());
+        v.resize(minimum_blocks(cf), Align64::<Block<R>>::default());
         alloc::boxed::Box::new(Self {
             v,
             _r: core::marker::PhantomData,
@@ -285,7 +305,7 @@ impl<R: ArrayLength + NonZero> BufferSet<memory::MaybeHugeSlice<Align64<Block<R>
         cf: core::num::NonZeroU8,
     ) -> BufferSet<memory::MaybeHugeSlice<Align64<Block<R>>>, R> {
         BufferSet {
-            v: memory::MaybeHugeSlice::new_maybe(Self::minimum_blocks(cf)),
+            v: memory::MaybeHugeSlice::new_maybe(minimum_blocks(cf)),
             _r: core::marker::PhantomData,
         }
     }
@@ -299,7 +319,7 @@ impl<R: ArrayLength + NonZero> BufferSet<memory::MaybeHugeSlice<Align64<Block<R>
         BufferSet<memory::MaybeHugeSlice<Align64<Block<R>>>, R>,
         Option<std::io::Error>,
     ) {
-        let (v, e) = memory::MaybeHugeSlice::new(Self::minimum_blocks(cf));
+        let (v, e) = memory::MaybeHugeSlice::new(minimum_blocks(cf));
         (
             BufferSet {
                 v,
@@ -311,10 +331,17 @@ impl<R: ArrayLength + NonZero> BufferSet<memory::MaybeHugeSlice<Align64<Block<R>
 }
 
 #[inline(always)]
-/// Convert a number of blocks to a Cost Factor (log2(N))
-const fn length_to_cf(l: usize) -> u8 {
+/// Convert a number of blocks to a Cost Factor (log2(N - 2))
+pub const fn length_to_cf(l: usize) -> u8 {
     let v = (l.saturating_sub(2)) as u32;
     ((32 - v.leading_zeros()) as u8).saturating_sub(1)
+}
+
+/// Get the minimum number of blocks required for a given Cost Factor ((1 << cf) + 2)
+#[inline(always)]
+pub const fn minimum_blocks(cf: NonZeroU8) -> usize {
+    let r = 1 << cf.get();
+    r + 2
 }
 
 impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength + NonZero>
@@ -362,13 +389,6 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
         self.v
     }
 
-    /// Get the minimum number of blocks required for a given N
-    #[inline(always)]
-    pub const fn minimum_blocks(cf: NonZeroU8) -> usize {
-        let r = 1 << cf.get();
-        r + 2
-    }
-
     /// Get the block buffer as 32-bit words
     pub fn input_buffer(&self) -> &Align64<Block<R>> {
         &self.v.as_ref()[0]
@@ -382,7 +402,7 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
     /// Set the input for the block buffer
     #[inline(always)]
     pub fn set_input(&mut self, hmac_state: &Pbkdf2HmacSha256State, salt: &[u8]) {
-        hmac_state.emit_scatter(salt, [self.input_buffer_mut().transmute_as_u8_mut()]);
+        hmac_state.emit_scatter(salt, [self.input_buffer_mut()]);
     }
 
     #[inline(always)]
@@ -409,7 +429,7 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
     /// Extract the output from the block buffer
     #[inline(always)]
     pub fn extract_output(&self, hmac_state: &Pbkdf2HmacSha256State, output: &mut [u8]) {
-        hmac_state.emit_gather([self.raw_salt_output().transmute_as_u8()], output);
+        hmac_state.emit_gather([self.raw_salt_output()], output);
     }
 
     /// Shorten the buffer set into a smaller buffer set and return the remainder as a slice,
@@ -426,7 +446,7 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
         BufferSet<&mut [Align64<Block<R>>], R>,
         &mut [Align64<Block<R>>],
     )> {
-        let min_blocks = Self::minimum_blocks(cf);
+        let min_blocks = minimum_blocks(cf);
         let (set, rest) = self.v.as_mut().split_at_mut_checked(min_blocks)?;
         Some((
             BufferSet {
@@ -451,7 +471,7 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
 
         unsafe {
             v.get_unchecked_mut(0)
-                .chunks_exact_mut(16)
+                .chunks_exact_mut(64)
                 .for_each(|chunk| {
                     S::shuffle_in(
                         chunk
@@ -479,19 +499,16 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
         let n = 1 << length_to_cf(v.len());
         // at least n+2 long, this is already enforced by length_to_cf so we can disable it for release builds
         debug_assert!(v.len() >= n + 2, "pipeline_end_ex: v.len() < n + 2");
+
         for _ in (0..n).step_by(2) {
-            let idx = unsafe { v.get_unchecked(n)[Mul32::<R>::USIZE - 16] as usize };
-            #[cfg(target_endian = "big")]
-            let idx = idx.swap_bytes();
+            let idx = integerify!(<R> unsafe { v.get_unchecked(n) });
 
             let j = idx & (n - 1);
 
             // SAFETY: the largest j value is n-1, so the largest index of the 3 is n+1, which is in bounds after the >=n+2 check
             let [in0, in1, out] = unsafe { v.get_disjoint_unchecked_mut([n, j, n + 1]) };
             block_mix!(R::USIZE; [<S> (&*in0, &*in1) => &mut *out]);
-            let idx2 = unsafe { v.get_unchecked(n + 1)[Mul32::<R>::USIZE - 16] as usize };
-            #[cfg(target_endian = "big")]
-            let idx2 = idx2.swap_bytes();
+            let idx2 = integerify!(<R> unsafe { v.get_unchecked(n + 1) });
 
             let j2 = idx2 & (n - 1);
 
@@ -502,7 +519,7 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
 
         unsafe {
             v.get_unchecked_mut(n)
-                .chunks_exact_mut(16)
+                .chunks_exact_mut(64)
                 .for_each(|chunk| {
                     S::shuffle_out(
                         chunk
@@ -552,7 +569,7 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
         unsafe {
             other_v
                 .get_unchecked_mut(0)
-                .chunks_exact_mut(16)
+                .chunks_exact_mut(64)
                 .for_each(|chunk| {
                     S::shuffle_in(
                         chunk
@@ -572,9 +589,7 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
             {
                 // Self: Compute T <- BlockMix(B ^ V[j])
                 // Other: Compute V[i+1] <- BlockMix(V[i])
-                let idx = unsafe { self_v.get_unchecked(n)[Mul32::<R>::USIZE - 16] as usize };
-                #[cfg(target_endian = "big")]
-                let idx = idx.swap_bytes();
+                let idx = integerify!(<R> unsafe { self_v.get_unchecked(n) });
 
                 let j = idx & (n - 1);
 
@@ -586,9 +601,7 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
             {
                 // Self: Compute B <- BlockMix(T ^ V[j'])
                 // Other: Compute V[i+2] <- BlockMix(V[i+1]) on last iteration it "naturally overflows" to V[n], so let B = V[n]
-                let idx2 = unsafe { self_v.get_unchecked(n + 1)[Mul32::<R>::USIZE - 16] as usize };
-                #[cfg(target_endian = "big")]
-                let idx2 = idx2.swap_bytes();
+                let idx2 = integerify!(<R> unsafe { self_v.get_unchecked(n + 1) });
 
                 let j2 = idx2 & (n - 1);
                 let [self_b, self_v, self_t] =
@@ -602,7 +615,7 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
         unsafe {
             self_v
                 .get_unchecked_mut(n)
-                .chunks_exact_mut(16)
+                .chunks_exact_mut(64)
                 .for_each(|chunk| {
                     S::shuffle_out(
                         chunk
@@ -793,7 +806,7 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
 
         unsafe {
             v.get_unchecked_mut(0)
-                .chunks_exact_mut(16)
+                .chunks_exact_mut(64)
                 .for_each(|chunk| {
                     S::shuffle_in(
                         chunk
@@ -831,7 +844,7 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
 
         unsafe {
             v.get_unchecked_mut(n)
-                .chunks_exact_mut(16)
+                .chunks_exact_mut(64)
                 .for_each(|chunk| {
                     S::shuffle_out(
                         chunk
@@ -888,7 +901,7 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
         unsafe {
             other_v
                 .get_unchecked_mut(0)
-                .chunks_exact_mut(16)
+                .chunks_exact_mut(64)
                 .for_each(|chunk| {
                     S::shuffle_in(
                         chunk
@@ -900,7 +913,7 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
                 });
         }
 
-        let mut idx = unsafe { self_v.get_unchecked(n)[Mul32::<R>::USIZE - 16] as usize };
+        let mut idx = integerify!(<R> unsafe { self_v.get_unchecked(n) });
         idx = idx & (n - 1);
         let mut input_b =
             InRegisterAdapter::<R>::init_with_block(unsafe { self_v.get_unchecked(n) });
@@ -919,7 +932,7 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
                 block_mix!(
                     R::USIZE; [<S> &*src => &mut *middle, <S> (&*self_vj, &input_b) => &mut *self_t]
                 );
-                idx = { self_t[Mul32::<R>::USIZE - 16] as usize } & (n - 1);
+                idx = integerify!(<R> self_t ) & (n - 1);
             }
 
             let [self_vj, self_t] = unsafe { self_v.get_disjoint_unchecked_mut([idx, n + 1]) };
@@ -939,7 +952,7 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
         unsafe {
             self_v
                 .get_unchecked_mut(n)
-                .chunks_exact_mut(16)
+                .chunks_exact_mut(64)
                 .for_each(|chunk| {
                     S::shuffle_out(
                         chunk
@@ -962,7 +975,7 @@ pub trait ScryptBlockMixInput<'a, R: ArrayLength, B: BlockType> {
 impl<'a, R: ArrayLength, B: BlockType> ScryptBlockMixInput<'a, R, B> for &'a Align64<Block<R>> {
     #[inline(always)]
     fn load(&self, word_idx: usize) -> B {
-        unsafe { B::read_from_ptr(self.as_ptr().add(word_idx * 16).cast()) }
+        unsafe { B::read_from_ptr(self.as_ptr().add(word_idx * 64).cast()) }
     }
 }
 
@@ -1016,17 +1029,17 @@ impl<'a, R: ArrayLength, B: BlockType> ScryptBlockMixOutput<'a, R, B>
 {
     #[inline(always)]
     fn store_even(&mut self, word_idx: usize, value: B) {
-        debug_assert!(word_idx * 16 < self.len());
-        unsafe { B::write_to_ptr(value, self.as_mut_ptr().add(word_idx * 16).cast()) }
+        debug_assert!(word_idx * 64 < self.len());
+        unsafe { B::write_to_ptr(value, self.as_mut_ptr().add(word_idx * 64).cast()) }
     }
     #[inline(always)]
     fn store_odd(&mut self, word_idx: usize, value: B) {
-        debug_assert!(Mul16::<R>::USIZE + word_idx * 16 < self.len());
+        debug_assert!(Mul64::<R>::USIZE + word_idx * 64 < self.len());
         unsafe {
             B::write_to_ptr(
                 value,
                 self.as_mut_ptr()
-                    .add(Mul16::<R>::USIZE + word_idx * 16)
+                    .add(Mul64::<R>::USIZE + word_idx * 64)
                     .cast(),
             )
         }
@@ -1054,7 +1067,7 @@ impl<R: ArrayLength> InRegisterAdapter<R> {
         Self {
             words: unsafe {
                 GenericArray::generate(|i| {
-                    core::arch::x86_64::_mm512_load_si512(block.as_ptr().add(i * 16).cast())
+                    core::arch::x86_64::_mm512_load_si512(block.as_ptr().add(i * 64).cast())
                 })
             },
         }
@@ -1065,9 +1078,9 @@ impl<R: ArrayLength> InRegisterAdapter<R> {
         use core::arch::x86_64::*;
         unsafe {
             for i in 0..R::USIZE {
-                _mm512_store_si512(output.as_mut_ptr().add(i * 32).cast(), self.words[i * 2]);
+                _mm512_store_si512(output.as_mut_ptr().add(i * 128).cast(), self.words[i * 2]);
                 _mm512_store_si512(
-                    output.as_mut_ptr().add(i * 32 + 16).cast(),
+                    output.as_mut_ptr().add(i * 128 + 64).cast(),
                     self.words[i * 2 + 1],
                 );
             }
@@ -1256,8 +1269,8 @@ mod tests {
     fn test_block_mix() {
         type R = U4;
 
-        let input0: Align64<Block<R>> = Align64(GenericArray::generate(|i| i as u32));
-        let input1: Align64<Block<R>> = Align64(GenericArray::generate(|i| (i + 1) as u32));
+        let input0: Align64<Block<R>> = Align64(GenericArray::generate(|i| i as u8));
+        let input1: Align64<Block<R>> = Align64(GenericArray::generate(|i| (i + 1) as u8));
         let mut output_0: Align64<Block<R>> = Align64(GenericArray::default());
         let mut output_1: Align64<Block<R>> = Align64(GenericArray::default());
 

@@ -3,7 +3,7 @@ use core::num::NonZeroU8;
 use generic_array::{
     ArrayLength,
     typenum::{
-        NonZero, U1, U2, U3, U4, U5, U6, U7, U8, U9, U10, U11, U12, U13, U14, U15, U16, U32, U64,
+        NonZero, U1, U2, U3, U4, U5, U6, U7, U8, U9, U10, U11, U12, U13, U14, U15, U16, U32,
     },
 };
 
@@ -48,10 +48,7 @@ fn scrypt_impl<R: ArrayLength + NonZero>(
 
     let mut buffer1 = BufferSet::<_, R>::new_boxed(log2_n);
 
-    hmac_state.emit_scatter(
-        salt,
-        input_buffers.iter_mut().map(|b| b.transmute_as_u8_mut()),
-    );
+    hmac_state.emit_scatter(salt, input_buffers.iter_mut());
 
     buffer0.pipeline(
         &mut buffer1,
@@ -59,11 +56,12 @@ fn scrypt_impl<R: ArrayLength + NonZero>(
         &mut (),
     );
 
-    hmac_state.emit_gather(output_buffers.iter().map(|b| b.transmute_as_u8()), output);
+    hmac_state.emit_gather(output_buffers.iter(), output);
 }
 
 /// Run scrypt with the given parameters and store the result in the output buffer.
 #[inline(always)]
+#[must_use]
 pub fn scrypt(
     password: &[u8],
     salt: &[u8],
@@ -91,7 +89,6 @@ pub fn scrypt(
         15 => scrypt_impl::<U15>(password, salt, log2_n, p, output),
         16 => scrypt_impl::<U16>(password, salt, log2_n, p, output),
         32 => scrypt_impl::<U32>(password, salt, log2_n, p, output),
-        64 => scrypt_impl::<U64>(password, salt, log2_n, p, output),
         _ => return false,
     }
     true
@@ -191,7 +188,7 @@ unsafe extern "C" fn scrypt_ro_mix_minimum_buffer_len(
     };
 
     match_r!(r, R, {
-        let num_blocks = BufferSet::<&mut [Align64<Block<R>>], R>::minimum_blocks(cf);
+        let num_blocks = crate::minimum_blocks(cf);
         num_blocks * core::mem::size_of::<Align64<Block<R>>>() as usize
     })
     .unwrap_or(0)
@@ -251,7 +248,7 @@ unsafe extern "C" fn scrypt_ro_mix(
     match_r!(r, R, {
         let available_blocks = minimum_buffer_size / core::mem::size_of::<Align64<Block<R>>>();
 
-        let minimum_blocks = BufferSet::<&mut [Align64<Block<R>>], R>::minimum_blocks(cf);
+        let minimum_blocks = crate::minimum_blocks(cf);
         if available_blocks < minimum_blocks {
             return SCRYPT_OPT_INVALID_BUFFER_SIZE;
         }
@@ -372,9 +369,9 @@ mod tests {
             assert!(!alloc1.is_null());
             let alloc1 = core::slice::from_raw_parts_mut(alloc1, min_buffer_len);
 
-            let input_slice = reference_buffer1.input_buffer().transmute_as_u8();
+            let input_slice = reference_buffer1.input_buffer();
             alloc1[..input_slice.len()].copy_from_slice(input_slice);
-            let input_slice = reference_buffer0.input_buffer().transmute_as_u8();
+            let input_slice = reference_buffer0.input_buffer();
             alloc0[..input_slice.len()].copy_from_slice(input_slice);
 
             scrypt_ro_mix(
@@ -419,22 +416,16 @@ mod tests {
             assert_eq!(
                 core::slice::from_raw_parts(
                     alloc0_salt_output,
-                    reference_buffer0.raw_salt_output().transmute_as_u8().len()
+                    reference_buffer0.raw_salt_output().len()
                 ),
-                reference_buffer0
-                    .raw_salt_output()
-                    .transmute_as_u8()
-                    .as_slice()
+                reference_buffer0.raw_salt_output().as_slice()
             );
             assert_eq!(
                 core::slice::from_raw_parts(
                     alloc1_salt_output,
-                    reference_buffer1.raw_salt_output().transmute_as_u8().len()
+                    reference_buffer1.raw_salt_output().len()
                 ),
-                reference_buffer1
-                    .raw_salt_output()
-                    .transmute_as_u8()
-                    .as_slice()
+                reference_buffer1.raw_salt_output().as_slice()
             );
 
             alloc::alloc::dealloc(alloc0.as_mut_ptr().cast(), layout);

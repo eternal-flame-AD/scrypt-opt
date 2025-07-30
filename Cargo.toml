@@ -32,7 +32,6 @@ generic-array = { version = "1.2", default-features = false }
 core_affinity = { version = "0.8", optional = true }
 clap = { version = "4.5", features = ["derive"], optional = true }
 base64 = { version = "0.22", optional = true }
-multiversion = { version = "0.8.0", default-features = false }
 
 [target.'cfg(target_arch = "x86_64")'.dependencies]
 cpufeatures = "0.2"

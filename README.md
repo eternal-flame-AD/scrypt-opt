@@ -25,7 +25,7 @@ This is _NOT_ audited cryptography! Don't use it for password hashing, etc.
 
 ## Limitations
 
-- `R` must be a compile time constant or monomorphized, the demo binary has code for R=1..=32 and R=64.
+- `R` must be a compile time constant or monomorphized, the demo binary and compat.rs has code for R=1..=32.
 - For mining or cases with low difficulty you might want to bring your own multi-buffer PBKDF core, the built in `Pbkdf2HmacSha256State` is designed for moderate to high difficulty cases where it is not called a lot. There are raw buffer APIs that allow you to do it easily. For really really low difficulty where the problem becomes more about data locality than software pipelining this program is may not be optimal, please compare with a full multi-buffer implementation.
 
 ## Demo Binary
@@ -45,10 +45,12 @@ echo -n "password" | scrypt-opt compute -s NaCl --cf 10 -r 8 -p 16
 /bq+HJ00cgB4VucZDQHp/nxq18vII3gw53N2Y0s3MWIurzDZLiKjiG/xCSedmDDaxyevuUqD7m2DYMvfoswGQA== 
 ```
 
-Solve a 💥PoW! Bot Deterrent PoW:
+Solve a 💥PoW! Bot Deterrent style PoW with a target hash of `0002` and output key length of 16 bytes:
+
+Offset is calculated as the number of output nibbles minus the number of target nibbles. (32 - 4 = 28)
 
 ```sh
-> scrypt-opt --num-threads 16 pow --target 0002 --salt KTlmPG9GFcM= --cf 14 --r 8
+> scrypt-opt --num-threads 16 pow --target 0002 --salt KTlmPG9GFcM= --cf 14 --r 8 --offset 28
 spawning 16 threads for an estimated iteration count of 10922
 Nonce   Result  N       R       EstimatedCands  RealCands       Luck%   RealCPS
 cf40000000000000        08402d18d2ba3be9ee4b620f8a840000        16384   8       10922    16975   21.13   1310.7
@@ -72,7 +74,7 @@ Each hash is pipelined into 4 steps:
 
 These APIs facilitate these:
 
-- `Block<R>` represents a 512-bit block in u32 form, it can be transmuted to/from a `BlockU8<R>` which is a 64-byte block in u8 form.
+- `Block<R>` represents a salsa20 (512-bit) block in u8 form.
 - `BufferSet::new`, `BufferSet::new_boxed`,  `BufferSet::new_maybe_huge_slice` create a new buffer set using an existing buffer or a new heap or huge page backed buffer. `BufferSet::minimum_blocks` returns the minimum number of blocks required to be allocated for a given Cost Factor (log2(N)).
 - `BufferSet::scrypt_ro_mix` performs the $RoMix_{Front}$ and then $RoMix_{Back}$ operation serially.
 - `BufferSet::pipeline_start` performs the $RoMix_{Front}$ operation.

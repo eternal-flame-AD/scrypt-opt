@@ -28,10 +28,7 @@ fn main() {
     let mut buffer0 = BufferSet::<_, R>::new_boxed(CF::U8.try_into().unwrap());
     let mut buffer1 = BufferSet::<_, R>::new_boxed(CF::U8.try_into().unwrap());
 
-    hmac_state.emit_scatter(
-        SALT,
-        input_buffers.iter_mut().map(|b| b.transmute_as_u8_mut()),
-    );
+    hmac_state.emit_scatter(SALT, input_buffers.iter_mut());
 
     buffer0.pipeline(
         &mut buffer1,
@@ -41,10 +38,7 @@ fn main() {
 
     let mut output = GenericArray::default();
 
-    hmac_state.emit_gather(
-        output_buffers.iter().map(|b| b.transmute_as_u8()),
-        &mut output,
-    );
+    hmac_state.emit_gather(output_buffers.iter(), &mut output);
 
     assert_eq!(output, KNOWN_ANSWER);
 }

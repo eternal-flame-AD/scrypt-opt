@@ -72,14 +72,14 @@ jobs:
 
           for build in debug release; do
             echo -n "pleaseletmein" | target/$build/scrypt-opt compute -s SodiumChloride --cf 14 -r 8 -p 1 | tee tmp/test-output/compute.txt
-            grep -q cCO9yzr9c0hGHAbNgf046/2o+7qQT44+qbVD9lRdofLVQylVYT8Pz2LUlwUkKpr55h6F3A1lHkDfzwF7RVdYhw== tmp/test-output/compute.txt
+            grep -q '$scrypt$ln=14$r=8$p=1$U29kaXVtQ2hsb3JpZGU$cCO9yzr9c0hGHAbNgf046/2o+7qQT44+qbVD9lRdofLVQylVYT8Pz2LUlwUkKpr55h6F3A1lHkDfzwF7RVdYhw' tmp/test-output/compute.txt
             echo -n "password" | target/$build/scrypt-opt compute -s NaCl --cf 10 -r 8 -p 16 | tee tmp/test-output/compute.txt
-            grep -q /bq+HJ00cgB4VucZDQHp/nxq18vII3gw53N2Y0s3MWIurzDZLiKjiG/xCSedmDDaxyevuUqD7m2DYMvfoswGQA== tmp/test-output/compute.txt
+            grep -q '$scrypt$ln=10$r=8$p=16$TmFDbA$/bq+HJ00cgB4VucZDQHp/nxq18vII3gw53N2Y0s3MWIurzDZLiKjiG/xCSedmDDaxyevuUqD7m2DYMvfoswGQA' tmp/test-output/compute.txt
           done
 
       - name: PoW Test (portable-simd release)
         run: |
           set -e
           mkdir -p tmp/test-output
-          target/release/scrypt-opt --num-threads $(nproc) pow --target 0002 --salt KTlmPG9GFcM= | tee tmp/test-output/pow.txt
+          target/release/scrypt-opt --num-threads $(nproc) pow --target 0002 --salt KTlmPG9GFcM= --offset 28 | tee tmp/test-output/pow.txt
           grep -q cf40000000000000 tmp/test-output/pow.txt

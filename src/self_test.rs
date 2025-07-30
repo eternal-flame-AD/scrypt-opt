@@ -158,14 +158,16 @@ pub trait CaseP1 {
         // compat API test
         #[cfg(feature = "std")]
         {
-            crate::compat::scrypt(
+            if !crate::compat::scrypt(
                 Self::PASSWORD,
                 Self::SALT,
                 Self::CF::U8.try_into().unwrap(),
                 Self::R::U32,
                 1,
                 output0.as_mut_slice(),
-            );
+            ) {
+                panic!("invalid/unsupported r value");
+            }
             assert_eq!(output0, Self::KNOWN_ANSWER);
             output0.fill(0);
         }
@@ -344,10 +346,7 @@ pub trait Case {
         let mut buffer0 = BufferSet::<_, Self::R>::new_boxed(Self::CF::U8.try_into().unwrap());
         let mut buffer1 = BufferSet::<_, Self::R>::new_boxed(Self::CF::U8.try_into().unwrap());
 
-        hmac_state.emit_scatter(
-            Self::SALT,
-            input_buffers.iter_mut().map(|b| b.transmute_as_u8_mut()),
-        );
+        hmac_state.emit_scatter(Self::SALT, input_buffers.iter_mut());
 
         buffer0.pipeline(
             &mut buffer1,
@@ -360,22 +359,21 @@ pub trait Case {
         // compat API test
         #[cfg(feature = "std")]
         {
-            crate::compat::scrypt(
+            if !crate::compat::scrypt(
                 Self::PASSWORD,
                 Self::SALT,
                 Self::CF::U8.try_into().unwrap(),
                 Self::R::U32,
                 Self::P::U32,
                 output.as_mut_slice(),
-            );
+            ) {
+                panic!("invalid/unsupported r value");
+            }
             assert_eq!(output, Self::KNOWN_ANSWER);
             output.fill(0);
         }
 
-        hmac_state.emit_gather(
-            output_buffers.iter().map(|b| b.transmute_as_u8()),
-            &mut output,
-        );
+        hmac_state.emit_gather(output_buffers.iter(), &mut output);
 
         assert_eq!(output, Self::KNOWN_ANSWER);
     }
