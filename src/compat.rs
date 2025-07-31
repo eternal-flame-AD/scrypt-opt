@@ -1,11 +1,10 @@
 use core::num::{NonZeroU8, NonZeroU32};
 
-use hmac::{Hmac, Mac, digest::FixedOutput};
-use sha2::Sha256;
+use generic_array::typenum::U1;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
-use crate::{Align64, RoMix};
+use crate::{Align64, RoMix, fixed_r, memory::MaybeHugeSlice, pbkdf2_1::Pbkdf2HmacSha256State};
 
 /// API constants for unsupported parameters.
 pub const SCRYPT_OPT_UNSUPPORTED_PARAM_SPACE: core::ffi::c_int = -1;
@@ -22,59 +21,96 @@ pub fn scrypt(
     salt: &[u8],
     log2_n: NonZeroU8,
     r: NonZeroU32,
-    p: u32,
+    p: NonZeroU32,
     output: &mut [u8],
 ) {
-    let mut buffers0 = vec![Align64([0u8; 64]); 2 * r.get() as usize * ((1 << log2_n.get()) + 2)];
-    let mut hmac_state = Hmac::<Sha256>::new_from_slice(password).unwrap();
-    let mut output_hmac_state = hmac_state.clone();
-    hmac_state.update(salt);
-    buffers0
-        .ro_mix_input_buffer(r)
-        .chunks_exact_mut(32)
-        .enumerate()
-        .for_each(|(i, chunk)| {
-            let mut this_hmac = hmac_state.clone();
-            this_hmac.update(&(i as u32 + 1).to_be_bytes());
-            this_hmac.finalize_into(chunk.try_into().unwrap());
-        });
+    let mut buffers0 = MaybeHugeSlice::<Align64<fixed_r::Block<U1>>>::new(
+        r.get() as usize * ((1 << log2_n.get()) + 2),
+    )
+    .0;
+
+    let hmac_state = Pbkdf2HmacSha256State::new(password);
+
+    hmac_state.emit_scatter(
+        salt,
+        buffers0
+            .ro_mix_input_buffer(r)
+            .chunks_exact_mut(core::mem::size_of::<Align64<fixed_r::Block<U1>>>())
+            .map(|chunk| unsafe {
+                chunk
+                    .as_mut_ptr()
+                    .cast::<Align64<fixed_r::Block<U1>>>()
+                    .as_mut()
+                    .unwrap()
+            }),
+    );
     buffers0.ro_mix_front(r, log2_n);
 
-    if p == 1 {
-        output_hmac_state.update(buffers0.ro_mix_back(r, log2_n));
-        output.chunks_mut(32).enumerate().for_each(|(i, chunk)| {
-            let mut this_hmac = output_hmac_state.clone();
-            this_hmac.update(&(i as u32 + 1).to_be_bytes());
-            let output = this_hmac.finalize();
-            chunk.copy_from_slice(&output.into_bytes()[..chunk.len()]);
-        });
+    if p.get() == 1 {
+        hmac_state.emit_gather(
+            buffers0
+                .ro_mix_back(r, log2_n)
+                .chunks_exact(core::mem::size_of::<Align64<fixed_r::Block<U1>>>())
+                .map(|block| unsafe {
+                    block
+                        .as_ptr()
+                        .cast::<Align64<fixed_r::Block<U1>>>()
+                        .as_ref()
+                        .unwrap()
+                }),
+            output,
+        );
+
         return;
     }
 
-    let mut buffers1 = vec![Align64([0u8; 64]); 2 * r.get() as usize * ((1 << log2_n.get()) + 2)];
+    let mut output_hmac_state = hmac_state.clone();
 
-    for chunk_idx in 1..p {
-        buffers1
-            .ro_mix_input_buffer(r)
-            .chunks_exact_mut(32)
-            .enumerate()
-            .for_each(|(i, chunk)| {
-                let mut this_hmac = hmac_state.clone();
-                this_hmac.update(&(i as u32 + 1 + chunk_idx * 4 * r.get()).to_be_bytes());
-                this_hmac.finalize_into(chunk.try_into().unwrap());
-            });
+    let mut buffers1 = MaybeHugeSlice::<Align64<fixed_r::Block<U1>>>::new(
+        r.get() as usize * ((1 << log2_n.get()) + 2),
+    )
+    .0;
 
-        output_hmac_state.update(buffers0.ro_mix_interleaved(&mut buffers1, r, log2_n));
+    for chunk_idx in 1..p.get() {
+        hmac_state.emit_scatter_offset(
+            salt,
+            buffers1
+                .ro_mix_input_buffer(r)
+                .chunks_exact_mut(core::mem::size_of::<Align64<fixed_r::Block<U1>>>())
+                .map(|chunk| unsafe {
+                    chunk
+                        .as_mut_ptr()
+                        .cast::<Align64<fixed_r::Block<U1>>>()
+                        .as_mut()
+                        .unwrap()
+                }),
+            chunk_idx * 4 * r.get(),
+        );
+
+        let salt = buffers0.ro_mix_interleaved(&mut buffers1, r, log2_n);
+
+        output_hmac_state.ingest_salt(unsafe {
+            core::slice::from_raw_parts(
+                salt.as_ptr().cast::<Align64<fixed_r::Block<U1>>>(),
+                salt.len() / core::mem::size_of::<Align64<fixed_r::Block<U1>>>(),
+            )
+        });
 
         (buffers0, buffers1) = (buffers1, buffers0);
     }
-    output_hmac_state.update(buffers0.ro_mix_back(r, log2_n));
-    output.chunks_mut(32).enumerate().for_each(|(i, chunk)| {
-        let mut this_hmac = output_hmac_state.clone();
-        this_hmac.update(&(i as u32 + 1).to_be_bytes());
-        let output = this_hmac.finalize();
-        chunk.copy_from_slice(&output.into_bytes()[..chunk.len()]);
-    });
+    output_hmac_state.emit_gather(
+        buffers0
+            .ro_mix_back(r, log2_n)
+            .chunks_exact(core::mem::size_of::<Align64<fixed_r::Block<U1>>>())
+            .map(|block| unsafe {
+                block
+                    .as_ptr()
+                    .cast::<Align64<fixed_r::Block<U1>>>()
+                    .as_ref()
+                    .unwrap()
+            }),
+        output,
+    );
 }
 
 #[unsafe(export_name = "scrypt_kdf_cf")]
@@ -96,14 +132,13 @@ pub unsafe extern "C" fn scrypt_c_cf(
     let Some(r) = NonZeroU32::new(r) else {
         return SCRYPT_OPT_UNSUPPORTED_PARAM_SPACE;
     };
-    scrypt(
-        password,
-        salt,
-        NonZeroU8::new(log2_n).unwrap(),
-        r,
-        p,
-        output,
-    );
+    let Some(p) = NonZeroU32::new(p) else {
+        return SCRYPT_OPT_UNSUPPORTED_PARAM_SPACE;
+    };
+    let Some(log2_n) = NonZeroU8::new(log2_n) else {
+        return SCRYPT_OPT_UNSUPPORTED_PARAM_SPACE;
+    };
+    scrypt(password, salt, log2_n, r, p, output);
     0
 }
 
@@ -131,6 +166,9 @@ pub unsafe extern "C" fn scrypt_c(
     let salt = unsafe { core::slice::from_raw_parts(salt, salt_len) };
     let output = unsafe { core::slice::from_raw_parts_mut(output, output_len) };
     let Some(r) = NonZeroU32::new(r) else {
+        return SCRYPT_OPT_UNSUPPORTED_PARAM_SPACE;
+    };
+    let Some(p) = NonZeroU32::new(p) else {
         return SCRYPT_OPT_UNSUPPORTED_PARAM_SPACE;
     };
     scrypt(password, salt, log2_n, r, p, output);
@@ -230,16 +268,20 @@ unsafe extern "C" fn scrypt_ro_mix(
         return SCRYPT_OPT_INVALID_BUFFER_SIZE;
     }
 
-    let available_blocks = minimum_buffer_size / core::mem::size_of::<Align64<[u8; 64]>>();
+    let available_blocks =
+        minimum_buffer_size / core::mem::size_of::<Align64<fixed_r::Block<U1>>>();
 
-    let minimum_blocks = 2 * r.get() as usize * ((1 << cf.get()) + 2);
+    let minimum_blocks = r.get() as usize * ((1 << cf.get()) + 2);
     if available_blocks < minimum_blocks {
         return SCRYPT_OPT_INVALID_BUFFER_SIZE;
     }
 
     if front_buffer.is_null() {
         let mut buffer_back = unsafe {
-            core::slice::from_raw_parts_mut(back_buffer.cast::<Align64<[u8; 64]>>(), minimum_blocks)
+            core::slice::from_raw_parts_mut(
+                back_buffer.cast::<Align64<fixed_r::Block<U1>>>(),
+                minimum_blocks,
+            )
         };
         let salt_output_out = buffer_back.ro_mix_back(r, cf);
         if !salt_output.is_null() {
@@ -250,14 +292,17 @@ unsafe extern "C" fn scrypt_ro_mix(
     } else if back_buffer.is_null() {
         let mut buffer_front = unsafe {
             core::slice::from_raw_parts_mut(
-                front_buffer.cast::<Align64<[u8; 64]>>(),
+                front_buffer.cast::<Align64<fixed_r::Block<U1>>>(),
                 minimum_blocks,
             )
         };
         buffer_front.ro_mix_front(r, cf);
     } else {
         let mut buffer_back = unsafe {
-            core::slice::from_raw_parts_mut(back_buffer.cast::<Align64<[u8; 64]>>(), minimum_blocks)
+            core::slice::from_raw_parts_mut(
+                back_buffer.cast::<Align64<fixed_r::Block<U1>>>(),
+                minimum_blocks,
+            )
         };
 
         let salt_output_out = if back_buffer == front_buffer {
@@ -266,7 +311,7 @@ unsafe extern "C" fn scrypt_ro_mix(
         } else {
             let mut buffer_front = unsafe {
                 core::slice::from_raw_parts_mut(
-                    front_buffer.cast::<Align64<[u8; 64]>>(),
+                    front_buffer.cast::<Align64<fixed_r::Block<U1>>>(),
                     minimum_blocks,
                 )
             };
@@ -345,7 +390,7 @@ mod tests {
                         b"salt",
                         cf.try_into().unwrap(),
                         r.try_into().unwrap(),
-                        p,
+                        p.try_into().unwrap(),
                         &mut output,
                     );
 

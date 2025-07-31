@@ -202,7 +202,7 @@ pub trait CaseP1 {
                 Self::SALT,
                 Self::CF::U8.try_into().unwrap(),
                 Self::R::U32.try_into().unwrap(),
-                1,
+                1.try_into().unwrap(),
                 output0.as_mut_slice(),
             );
             assert_eq!(output0, Self::KNOWN_ANSWER);
@@ -401,7 +401,7 @@ pub trait Case {
                 Self::SALT,
                 Self::CF::U8.try_into().unwrap(),
                 Self::R::U32.try_into().unwrap(),
-                Self::P::U32,
+                Self::P::U32.try_into().unwrap(),
                 output.as_mut_slice(),
             );
             assert_eq!(output, Self::KNOWN_ANSWER);
@@ -419,30 +419,30 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_cast_16_1_1_algorithm_self_test() {
+    fn test_case_16_1_1_algorithm_self_test() {
         CaseN16R1P1::algorithm_self_test();
     }
 
     #[test]
-    fn test_cast_16_1_1_pipeline_api_test() {
+    fn test_case_16_1_1_pipeline_api_test() {
         CaseN16R1P1::pipeline_api_test();
     }
 
     #[cfg(feature = "alloc")]
     #[test]
-    fn test_cast_16384_8_1_algorithm_self_test() {
+    fn test_case_16384_8_1_algorithm_self_test() {
         CaseN16384R8P1::algorithm_self_test();
     }
 
     #[cfg(feature = "alloc")]
     #[test]
-    fn test_cast_1024_8_16_algorithm_self_test() {
+    fn test_case_1024_8_16_algorithm_self_test() {
         CaseN1024R8P16::algorithm_self_test();
     }
 
     #[cfg(feature = "alloc")]
     #[test]
-    fn test_cast_1024_1_2_algorithm_self_test() {
+    fn test_case_1024_1_2_algorithm_self_test() {
         CaseN1024R1P2::algorithm_self_test();
     }
 

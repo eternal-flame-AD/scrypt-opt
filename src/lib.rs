@@ -30,9 +30,6 @@ macro_rules! repeat8 {
 /// Re-export sha2
 pub use sha2;
 
-/// Re-export hmac
-pub use hmac;
-
 /// Re-export generic_array
 pub use generic_array;
 
@@ -163,17 +160,17 @@ impl_valid_cost_factor!(
 pub trait RoMix {
     /// Perform the front part of the $RoMix$ operation
     ///
-    /// Buffer must be at least 2 * r * (n + 1) bytes long.
+    /// Buffer must be at least 128 * r * (n + 1) bytes long.
     fn ro_mix_front_ex<S: Salsa20<Lanes = U1>>(&mut self, r: NonZeroU32, cf: NonZeroU8);
     /// Perform the back part of the $RoMix$ operation
     ///
-    /// Buffer must be at least 2 * r * (n + 2) bytes long.
+    /// Buffer must be at least 128 * r * (n + 2) bytes long.
     ///
     /// Return: the raw salt output for the completed $RoMix$ operation
     fn ro_mix_back_ex<S: Salsa20<Lanes = U1>>(&mut self, r: NonZeroU32, cf: NonZeroU8) -> &[u8];
     /// Interleave the front and back parts of the $RoMix$ operation in two independent buffers
     ///
-    /// Buffer must be at least 2 * r * (n + 2) bytes long.
+    /// Buffer must be at least 128 * r * (n + 2) bytes long.
     ///
     /// Return: the raw salt output for the completed $RoMix$ operation
     fn ro_mix_interleaved_ex<'a, S: Salsa20<Lanes = U2>>(
@@ -183,18 +180,20 @@ pub trait RoMix {
         cf: NonZeroU8,
     ) -> &'a [u8];
 
-    /// Get the input buffer for the $RoMix$ operation
+    /// Convenience method to get the input buffer for the $RoMix$ operation
+    ///
+    /// Always return the 128 * r bytes of the buffer
     fn ro_mix_input_buffer(&mut self, r: NonZeroU32) -> &mut [u8];
 
     /// Perform the front part of the $RoMix$ operation
     ///
-    /// Buffer must be at least 2 * r * (n + 1) bytes long.
+    /// Buffer must be at least 128 * r * (n + 1) bytes long.
     fn ro_mix_front(&mut self, r: NonZeroU32, cf: NonZeroU8) {
         self.ro_mix_front_ex::<DefaultEngine1>(r, cf);
     }
     /// Perform the back part of the $RoMix$ operation
     ///
-    /// Buffer must be at least 2 * r * (n + 2) bytes long.
+    /// Buffer must be at least 128 * r * (n + 2) bytes long.
     ///
     /// Return: the raw salt output for the completed $RoMix$ operation
     fn ro_mix_back(&mut self, r: NonZeroU32, cf: NonZeroU8) -> &[u8] {
@@ -202,93 +201,11 @@ pub trait RoMix {
     }
     /// Interleave the front and back parts of the $RoMix$ operation in two independent buffers
     ///
-    /// Buffer must be at least 2 * r * (n + 2) bytes long.
+    /// Buffer must be at least 128 * r * (n + 2) bytes long.
     ///
     /// Return: the raw salt output for the completed $RoMix$ operation
     fn ro_mix_interleaved(&mut self, front: &mut Self, r: NonZeroU32, cf: NonZeroU8) -> &[u8] {
         self.ro_mix_interleaved_ex::<DefaultEngine2>(front, r, cf)
-    }
-}
-
-#[inline(always)]
-/// Perform the BlockMix operation on 2R 128-bit blocks
-pub fn block_mix_dyn<
-    'a,
-    B: crate::BlockType,
-    S: Salsa20<Lanes = U1, Block = B>,
-    I: ScryptBlockMixInput<'a, B>,
->(
-    input: &I,
-    output: &mut [Align64<[u8; 64]>],
-) {
-    let r = output.len() / 2;
-
-    let mut x: S::Block = unsafe { input.load(r * 2 - 1) };
-
-    for i in 0..r {
-        x.xor_with(unsafe { input.load(2 * i) });
-        let mut b = S::read(GenericArray::from_array([&x]));
-        b.keystream::<4>();
-        b.write(GenericArray::from_array([&mut x]));
-
-        unsafe {
-            x.write_to_ptr(output[i].as_mut_ptr().cast());
-        }
-
-        x.xor_with(unsafe { input.load(2 * i + 1) });
-        let mut b = S::read(GenericArray::from_array([&x]));
-        b.keystream::<4>();
-        b.write(GenericArray::from_array([&mut x]));
-
-        unsafe {
-            x.write_to_ptr(output[i + r].as_mut_ptr().cast());
-        }
-    }
-}
-
-#[inline(always)]
-/// Perform the BlockMix operation on 2R 256-bit blocks
-pub fn block_mix_dyn_mb2<
-    'a,
-    'b,
-    B: crate::BlockType,
-    S: Salsa20<Lanes = U2, Block = B>,
-    I0: ScryptBlockMixInput<'a, B>,
-    I1: ScryptBlockMixInput<'b, B>,
->(
-    input0: &I0,
-    output0: &mut [Align64<[u8; 64]>],
-    input1: &I1,
-    output1: &mut [Align64<[u8; 64]>],
-) {
-    debug_assert_eq!(output0.len(), output1.len());
-    let r = output0.len().min(output1.len()) / 2;
-
-    let mut x0: S::Block = unsafe { input0.load(r * 2 - 1) };
-    let mut x1: S::Block = unsafe { input1.load(r * 2 - 1) };
-
-    for i in 0..r {
-        x0.xor_with(unsafe { input0.load(2 * i) });
-        x1.xor_with(unsafe { input1.load(2 * i) });
-        let mut b0 = S::read(GenericArray::from_array([&x0, &x1]));
-        b0.keystream::<4>();
-        b0.write(GenericArray::from_array([&mut x0, &mut x1]));
-
-        unsafe {
-            x0.write_to_ptr(output0[i].as_mut_ptr().cast());
-            x1.write_to_ptr(output1[i].as_mut_ptr().cast());
-        }
-
-        x0.xor_with(unsafe { input0.load(2 * i + 1) });
-        x1.xor_with(unsafe { input1.load(2 * i + 1) });
-        let mut b0 = S::read(GenericArray::from_array([&x0, &x1]));
-        b0.keystream::<4>();
-        b0.write(GenericArray::from_array([&mut x0, &mut x1]));
-
-        unsafe {
-            x0.write_to_ptr(output0[i + r].as_mut_ptr().cast());
-            x1.write_to_ptr(output1[i + r].as_mut_ptr().cast());
-        }
     }
 }
 
@@ -301,23 +218,32 @@ pub fn block_mix_dyn_mb2<
     inline(always)
 )]
 fn ro_mix_front_ex_dyn<S: Salsa20<Lanes = U1>>(
-    v: &mut [Align64<[u8; 64]>],
+    v: &mut [Align64<fixed_r::Block<U1>>],
     r: NonZeroU32,
     cf: NonZeroU8,
 ) {
     let r = r.get() as usize;
     let n = 1 << cf.get();
     assert!(
-        v.len() >= 2 * r * (n + 1),
-        "ro_mix_front_ex: v.len() < 2 * r * (n + 1)"
+        v.len() >= r * (n + 1),
+        "ro_mix_front_ex: v.len() < r * (n + 1)"
     );
 
+    // SAFETY: n is at least 1, v is at least r long
     unsafe {
-        v[..(2 * r)].iter_mut().for_each(|chunk| {
+        v.get_unchecked_mut(..r).iter_mut().for_each(|chunk| {
             S::shuffle_in(
                 chunk
                     .as_mut_ptr()
                     .cast::<Align64<[u32; 16]>>()
+                    .as_mut()
+                    .unwrap(),
+            );
+            S::shuffle_in(
+                chunk
+                    .as_mut_ptr()
+                    .cast::<Align64<[u32; 16]>>()
+                    .add(1)
                     .as_mut()
                     .unwrap(),
             );
@@ -326,10 +252,7 @@ fn ro_mix_front_ex_dyn<S: Salsa20<Lanes = U1>>(
 
     for i in 0..n {
         let [src, dst] = unsafe {
-            v.get_disjoint_unchecked_mut([
-                (i * (2 * r))..((i + 1) * (2 * r)),
-                ((i + 1) * (2 * r))..((i + 2) * (2 * r)),
-            ])
+            v.get_disjoint_unchecked_mut([(i * r)..((i + 1) * r), ((i + 1) * r)..((i + 2) * r)])
         };
         block_mix_dyn!(r; [<S> &*src => &mut *dst]);
     }
@@ -344,21 +267,21 @@ fn ro_mix_front_ex_dyn<S: Salsa20<Lanes = U1>>(
     inline(always)
 )]
 fn ro_mix_back_ex_dyn<S: Salsa20<Lanes = U1>>(
-    v: &mut [Align64<[u8; 64]>],
+    v: &mut [Align64<fixed_r::Block<U1>>],
     r: NonZeroU32,
     cf: NonZeroU8,
 ) -> &[u8] {
     let r = r.get() as usize;
     let n = 1 << cf.get();
     assert!(
-        v.len() >= 2 * r * (n + 2),
-        "pipeline_end_ex: v.len() < 2n + 2"
+        v.len() >= r * (n + 2),
+        "pipeline_end_ex: v.len() < r * (n + 2)"
     );
 
     for _ in (0..n).step_by(2) {
         let idx = unsafe {
             v.as_ptr()
-                .add((n * 2 * r) as usize)
+                .add((n * r) as usize)
                 .cast::<u32>()
                 .add(r * 32 - 16)
                 .read()
@@ -369,15 +292,15 @@ fn ro_mix_back_ex_dyn<S: Salsa20<Lanes = U1>>(
         // SAFETY: the largest j value is n-1, so the largest index of the 3 is n+1, which is in bounds after the >=n+2 check
         let [in0, in1, out] = unsafe {
             v.get_disjoint_unchecked_mut([
-                (n * (2 * r))..((n + 1) * (2 * r)),
-                (j * (2 * r))..((j + 1) * (2 * r)),
-                ((n + 1) * (2 * r))..((n + 2) * (2 * r)),
+                (n * r)..((n + 1) * r),
+                (j * r)..((j + 1) * r),
+                ((n + 1) * r)..((n + 2) * r),
             ])
         };
         block_mix_dyn!(r; [<S> &(&*in0, &*in1) => &mut *out]);
         let idx2 = unsafe {
             v.as_ptr()
-                .add(((n + 1) * 2 * r) as usize)
+                .add(((n + 1) * r) as usize)
                 .cast::<u32>()
                 .add(r * 32 - 16)
                 .read()
@@ -388,16 +311,17 @@ fn ro_mix_back_ex_dyn<S: Salsa20<Lanes = U1>>(
         // SAFETY: the largest j2 value is n-1, so the largest index of the 3 is n+1, which is in bounds after the >=n+2 check
         let [b, v, t] = unsafe {
             v.get_disjoint_unchecked_mut([
-                (n * (2 * r))..((n + 1) * (2 * r)),
-                (j2 * (2 * r))..((j2 + 1) * (2 * r)),
-                ((n + 1) * (2 * r))..((n + 2) * (2 * r)),
+                (n * r)..((n + 1) * r),
+                (j2 * r)..((j2 + 1) * r),
+                ((n + 1) * r)..((n + 2) * r),
             ])
         };
         block_mix_dyn!(r; [<S> &(&*v, &*t) => &mut *b]);
     }
 
+    // SAFETY: n is at least 1, v is at least r * (n + 2) long
     unsafe {
-        v[(2 * r * n)..(2 * r * (n + 1))]
+        v.get_unchecked_mut(r * n..r * (n + 1))
             .iter_mut()
             .for_each(|chunk| {
                 S::shuffle_out(
@@ -407,9 +331,17 @@ fn ro_mix_back_ex_dyn<S: Salsa20<Lanes = U1>>(
                         .as_mut()
                         .unwrap(),
                 );
+                S::shuffle_out(
+                    chunk
+                        .as_mut_ptr()
+                        .cast::<Align64<[u32; 16]>>()
+                        .add(1)
+                        .as_mut()
+                        .unwrap(),
+                );
             });
 
-        core::slice::from_raw_parts(v.as_ptr().add(2 * r * n).cast::<u8>(), 128 * r)
+        core::slice::from_raw_parts(v.as_ptr().add(r * n).cast::<u8>(), 128 * r)
     }
 }
 
@@ -422,8 +354,8 @@ fn ro_mix_back_ex_dyn<S: Salsa20<Lanes = U1>>(
     inline(always)
 )]
 fn ro_mix_interleaved_ex_dyn<'a, S: Salsa20<Lanes = U2>>(
-    self_v: &mut [Align64<[u8; 64]>],
-    other_v: &mut [Align64<[u8; 64]>],
+    self_v: &mut [Align64<fixed_r::Block<U1>>],
+    other_v: &mut [Align64<fixed_r::Block<U1>>],
     r: NonZeroU32,
     cf: NonZeroU8,
 ) -> &'a [u8] {
@@ -431,21 +363,30 @@ fn ro_mix_interleaved_ex_dyn<'a, S: Salsa20<Lanes = U2>>(
     let n = 1 << cf.get();
 
     assert!(
-        other_v.len() >= 2 * r * (n + 2),
-        "ro_mix_interleaved_ex: other_v.len() < 2 * r * (n + 2)"
+        other_v.len() >= r * (n + 2),
+        "ro_mix_interleaved_ex: other_v.len() < r * (n + 2)"
     );
     assert!(
-        self_v.len() >= 2 * r * (n + 2),
-        "ro_mix_interleaved_ex: self_v.len() < 2 * r * (n + 2)"
+        self_v.len() >= r * (n + 2),
+        "ro_mix_interleaved_ex: self_v.len() < r * (n + 2)"
     );
 
     // SAFETY: other_v is always 64-byte aligned
+    // SAFETY: other_v is at least r long
     unsafe {
-        other_v[..(2 * r)].iter_mut().for_each(|chunk| {
+        other_v.get_unchecked_mut(..r).iter_mut().for_each(|chunk| {
             S::shuffle_in(
                 chunk
                     .as_mut_ptr()
                     .cast::<Align64<[u32; 16]>>()
+                    .as_mut()
+                    .unwrap(),
+            );
+            S::shuffle_in(
+                chunk
+                    .as_mut_ptr()
+                    .cast::<Align64<[u32; 16]>>()
+                    .add(1)
                     .as_mut()
                     .unwrap(),
             );
@@ -456,9 +397,9 @@ fn ro_mix_interleaved_ex_dyn<'a, S: Salsa20<Lanes = U2>>(
         // SAFETY: the largest i value is n-1, so the largest index is n+1, which is in bounds after the >=n+2 check
         let [src, middle, dst] = unsafe {
             other_v.get_disjoint_unchecked_mut([
-                (i * (2 * r))..((i + 1) * (2 * r)),
-                ((i + 1) * (2 * r))..((i + 2) * (2 * r)),
-                ((i + 2) * (2 * r))..((i + 3) * (2 * r)),
+                (i * r)..((i + 1) * r),
+                ((i + 1) * r)..((i + 2) * r),
+                ((i + 2) * r)..((i + 3) * r),
             ])
         };
 
@@ -468,7 +409,7 @@ fn ro_mix_interleaved_ex_dyn<'a, S: Salsa20<Lanes = U2>>(
             let idx = unsafe {
                 self_v
                     .as_ptr()
-                    .add((n * 2 * r) as usize)
+                    .add((n * r) as usize)
                     .cast::<u32>()
                     .add(r * 32 - 16)
                     .read()
@@ -478,9 +419,9 @@ fn ro_mix_interleaved_ex_dyn<'a, S: Salsa20<Lanes = U2>>(
 
             let [in0, in1, out] = unsafe {
                 self_v.get_disjoint_unchecked_mut([
-                    (j * (2 * r))..((j + 1) * (2 * r)),
-                    (n * (2 * r))..((n + 1) * (2 * r)),
-                    ((n + 1) * (2 * r))..((n + 2) * (2 * r)),
+                    (j * r)..((j + 1) * r),
+                    (n * r)..((n + 1) * r),
+                    ((n + 1) * r)..((n + 2) * r),
                 ])
             };
 
@@ -493,7 +434,7 @@ fn ro_mix_interleaved_ex_dyn<'a, S: Salsa20<Lanes = U2>>(
             let idx2 = unsafe {
                 self_v
                     .as_ptr()
-                    .add(((n + 1) * 2 * r) as usize)
+                    .add(((n + 1) * r) as usize)
                     .cast::<u32>()
                     .add(r * 32 - 16)
                     .read()
@@ -502,17 +443,19 @@ fn ro_mix_interleaved_ex_dyn<'a, S: Salsa20<Lanes = U2>>(
             let j2 = idx2 & (n - 1);
             let [self_b, self_v, self_t] = unsafe {
                 self_v.get_disjoint_unchecked_mut([
-                    (n * (2 * r))..((n + 1) * (2 * r)),
-                    (j2 * (2 * r))..((j2 + 1) * (2 * r)),
-                    ((n + 1) * (2 * r))..((n + 2) * (2 * r)),
+                    (n * r)..((n + 1) * r),
+                    (j2 * r)..((j2 + 1) * r),
+                    ((n + 1) * r)..((n + 2) * r),
                 ])
             };
 
             block_mix_dyn!(r; [<S> &*middle => &mut *dst, <S> &(&*self_v, &*self_t) => &mut *self_b]);
         }
     }
+    // SAFETY: n is at least 1, self_v is at least r * (n + 2) long
     unsafe {
-        self_v[(2 * r * n)..(2 * r * (n + 1))]
+        self_v
+            .get_unchecked_mut(r * n..r * (n + 1))
             .iter_mut()
             .for_each(|chunk| {
                 S::shuffle_out(
@@ -522,17 +465,25 @@ fn ro_mix_interleaved_ex_dyn<'a, S: Salsa20<Lanes = U2>>(
                         .as_mut()
                         .unwrap(),
                 );
+                S::shuffle_out(
+                    chunk
+                        .as_mut_ptr()
+                        .cast::<Align64<[u32; 16]>>()
+                        .add(1)
+                        .as_mut()
+                        .unwrap(),
+                );
             });
 
-        core::slice::from_raw_parts(self_v.as_ptr().add(2 * r * n).cast::<u8>(), 128 * r)
+        core::slice::from_raw_parts(self_v.as_ptr().add(r * n).cast::<u8>(), 128 * r)
     }
 }
 
-impl<Q: AsRef<[Align64<[u8; 64]>]> + AsMut<[Align64<[u8; 64]>]>> RoMix for Q {
+impl<Q: AsRef<[Align64<fixed_r::Block<U1>>]> + AsMut<[Align64<fixed_r::Block<U1>>]>> RoMix for Q {
     fn ro_mix_input_buffer(&mut self, r: NonZeroU32) -> &mut [u8] {
         let r = r.get() as usize;
         let v = self.as_mut();
-        assert!(v.len() >= 2 * r, "ro_mix_input_buffer: v.len() < 2 * r");
+        assert!(v.len() >= r, "ro_mix_input_buffer: v.len() <  r");
         unsafe { core::slice::from_raw_parts_mut(v.as_mut_ptr().cast::<u8>(), 128 * r) }
     }
 
@@ -593,10 +544,10 @@ pub trait ScryptBlockMixInput<'a, B: BlockType> {
     unsafe fn load(&self, word_idx: usize) -> B;
 }
 
-impl<'a, B: BlockType> ScryptBlockMixInput<'a, B> for &'a [Align64<[u8; 64]>] {
+impl<'a, B: BlockType> ScryptBlockMixInput<'a, B> for &'a [Align64<fixed_r::Block<U1>>] {
     #[inline(always)]
     unsafe fn load(&self, word_idx: usize) -> B {
-        unsafe { B::read_from_ptr(self[word_idx].as_ptr().cast()) }
+        unsafe { B::read_from_ptr(self.as_ptr().cast::<[u8; 64]>().add(word_idx).cast()) }
     }
 }
 
@@ -825,7 +776,7 @@ mod tests {
 
         let mut buffers = BufferSet::<_, R>::new_boxed(CF.try_into().unwrap());
 
-        let mut buffer_dyn = vec![Align64([0u8; 64]); 2 * R::USIZE * ((1 << CF) + 2)];
+        let mut buffer_dyn = vec![Default::default(); R::USIZE * ((1 << CF) + 2)];
 
         assert_eq!(buffers.n(), 1 << CF);
 
@@ -936,8 +887,8 @@ mod tests {
 
         let mut buffers0 = BufferSet::<_, R>::new_boxed(CF.try_into().unwrap());
         let mut buffers1 = BufferSet::<_, R>::new_boxed(CF.try_into().unwrap());
-        let mut buffers0_dyn = vec![Align64([0u8; 64]); 2 * R::USIZE * ((1 << CF) + 2)];
-        let mut buffers1_dyn = vec![Align64([0u8; 64]); 2 * R::USIZE * ((1 << CF) + 2)];
+        let mut buffers0_dyn = vec![Default::default(); R::USIZE * ((1 << CF) + 2)];
+        let mut buffers1_dyn = vec![Default::default(); R::USIZE * ((1 << CF) + 2)];
 
         let mut output = [0u8; 64];
         buffers0.set_input(&Pbkdf2HmacSha256State::new(passwords[0]), b"salt");

@@ -1,0 +1,530 @@
+api/1T/scrypt_kdf/scrypt-opt/ln=14/r=1/p=1
+                        time:   [1.9138 ms 1.9139 ms 1.9141 ms]
+                        thrpt:  [2.0408 GiB/s 2.0410 GiB/s 2.0411 GiB/s]
+                 change:
+                        time:   [−11.061% −10.883% −10.743%] (p = 0.00 < 0.05)
+                        thrpt:  [+12.035% +12.213% +12.436%]
+                        Performance has improved.
+api/1T/scrypt_kdf/RustCrypto/ln=14/r=1/p=1
+                        time:   [2.5936 ms 2.5940 ms 2.5947 ms]
+                        thrpt:  [1.5055 GiB/s 1.5059 GiB/s 1.5061 GiB/s]
+                 change:
+                        time:   [−2.5261% −2.1900% −1.8016%] (p = 0.00 < 0.05)
+                        thrpt:  [+1.8347% +2.2391% +2.5915%]
+                        Performance has improved.
+api/1T/scrypt_kdf/scrypt-opt/ln=14/r=1/p=2
+                        time:   [2.9697 ms 2.9768 ms 2.9867 ms]
+                        thrpt:  [2.6158 GiB/s 2.6244 GiB/s 2.6307 GiB/s]
+                 change:
+                        time:   [−35.620% −35.369% −35.074%] (p = 0.00 < 0.05)
+                        thrpt:  [+54.021% +54.725% +55.327%]
+                        Performance has improved.
+api/1T/scrypt_kdf/RustCrypto/ln=14/r=1/p=2
+                        time:   [5.1650 ms 5.1830 ms 5.1969 ms]
+                        thrpt:  [1.5033 GiB/s 1.5073 GiB/s 1.5126 GiB/s]
+                 change:
+                        time:   [−2.9681% −2.6730% −2.3219%] (p = 0.00 < 0.05)
+                        thrpt:  [+2.3771% +2.7464% +3.0589%]
+                        Performance has improved.
+api/1T/scrypt_kdf/scrypt-opt/ln=14/r=1/p=4
+                        time:   [5.0839 ms 5.0996 ms 5.1233 ms]
+                        thrpt:  [3.0498 GiB/s 3.0640 GiB/s 3.0735 GiB/s]
+                 change:
+                        time:   [−45.291% −45.135% −44.940%] (p = 0.00 < 0.05)
+                        thrpt:  [+81.621% +82.266% +82.785%]
+                        Performance has improved.
+api/1T/scrypt_kdf/RustCrypto/ln=14/r=1/p=4
+                        time:   [10.583 ms 10.587 ms 10.594 ms]
+                        thrpt:  [1.4749 GiB/s 1.4758 GiB/s 1.4765 GiB/s]
+                 change:
+                        time:   [−1.5429% −1.4645% −1.3871%] (p = 0.00 < 0.05)
+                        thrpt:  [+1.4066% +1.4862% +1.5670%]
+                        Performance has improved.
+api/1T/scrypt_kdf/scrypt-opt/ln=14/r=1/p=32
+                        time:   [35.346 ms 35.414 ms 35.454 ms]
+                        thrpt:  [3.5257 GiB/s 3.5297 GiB/s 3.5365 GiB/s]
+                 change:
+                        time:   [−52.544% −52.353% −52.105%] (p = 0.00 < 0.05)
+                        thrpt:  [+108.79% +109.88% +110.72%]
+                        Performance has improved.
+
+api/1T/scrypt_kdf/RustCrypto/ln=14/r=1/p=32
+                        time:   [83.340 ms 83.354 ms 83.370 ms]
+                        thrpt:  [1.4993 GiB/s 1.4996 GiB/s 1.4999 GiB/s]
+                 change:
+                        time:   [−1.8741% −1.8283% −1.7822%] (p = 0.00 < 0.05)
+                        thrpt:  [+1.8146% +1.8624% +1.9099%]
+                        Performance has improved.
+api/1T/scrypt_kdf/scrypt-opt/ln=14/r=8/p=1
+                        time:   [13.712 ms 13.718 ms 13.726 ms]
+                        thrpt:  [2.2768 GiB/s 2.2780 GiB/s 2.2790 GiB/s]
+                 change:
+                        time:   [−17.114% −17.020% −16.930%] (p = 0.00 < 0.05)
+                        thrpt:  [+20.381% +20.511% +20.648%]
+                        Performance has improved.
+api/1T/scrypt_kdf/RustCrypto/ln=14/r=8/p=1
+                        time:   [18.823 ms 18.839 ms 18.856 ms]
+                        thrpt:  [1.6573 GiB/s 1.6588 GiB/s 1.6602 GiB/s]
+                 change:
+                        time:   [+1.3691% +1.5296% +1.7053%] (p = 0.00 < 0.05)
+                        thrpt:  [−1.6767% −1.5066% −1.3506%]
+                        Performance has regressed.
+api/1T/scrypt_kdf/scrypt-opt/ln=14/r=8/p=2
+                        time:   [21.736 ms 21.750 ms 21.764 ms]
+                        thrpt:  [2.8717 GiB/s 2.8736 GiB/s 2.8754 GiB/s]
+                 change:
+                        time:   [−37.857% −37.730% −37.612%] (p = 0.00 < 0.05)
+                        thrpt:  [+60.287% +60.590% +60.920%]
+                        Performance has improved.
+api/1T/scrypt_kdf/RustCrypto/ln=14/r=8/p=2
+                        time:   [37.525 ms 37.560 ms 37.593 ms]
+                        thrpt:  [1.6625 GiB/s 1.6640 GiB/s 1.6656 GiB/s]
+                 change:
+                        time:   [−0.1721% +0.0701% +0.4204%] (p = 0.73 > 0.05)
+                        thrpt:  [−0.4186% −0.0701% +0.1724%]
+                        No change in performance detected.
+api/1T/scrypt_kdf/scrypt-opt/ln=14/r=8/p=4
+                        time:   [36.881 ms 37.041 ms 37.140 ms]
+                        thrpt:  [3.3656 GiB/s 3.3746 GiB/s 3.3893 GiB/s]
+                 change:
+                        time:   [−48.159% −47.863% −47.614%] (p = 0.00 < 0.05)
+                        thrpt:  [+90.889% +91.804% +92.899%]
+                        Performance has improved.
+
+api/1T/scrypt_kdf/RustCrypto/ln=14/r=8/p=4
+                        time:   [73.964 ms 74.009 ms 74.066 ms]
+                        thrpt:  [1.6877 GiB/s 1.6890 GiB/s 1.6900 GiB/s]
+                 change:
+                        time:   [+0.4176% +0.6591% +0.9444%] (p = 0.00 < 0.05)
+                        thrpt:  [−0.9356% −0.6548% −0.4159%]
+                        Change within noise threshold.
+api/1T/scrypt_kdf/scrypt-opt/ln=14/r=8/p=32
+                        time:   [247.36 ms 247.68 ms 248.01 ms]
+                        thrpt:  [4.0321 GiB/s 4.0375 GiB/s 4.0426 GiB/s]
+                 change:
+                        time:   [−57.321% −57.242% −57.157%] (p = 0.00 < 0.05)
+                        thrpt:  [+133.41% +133.87% +134.31%]
+                        Performance has improved.
+
+api/1T/scrypt_kdf/RustCrypto/ln=14/r=8/p=32
+                        time:   [586.88 ms 587.18 ms 587.50 ms]
+                        thrpt:  [1.7021 GiB/s 1.7030 GiB/s 1.7039 GiB/s]
+                 change:
+                        time:   [−1.4286% −1.2358% −1.0495%] (p = 0.00 < 0.05)
+                        thrpt:  [+1.0606% +1.2513% +1.4493%]
+                        Performance has improved.
+
+api/1T/scrypt_kdf/scrypt-opt/ln=14/r=32/p=1
+                        time:   [89.151 ms 89.199 ms 89.265 ms]
+                        thrpt:  [1.4003 GiB/s 1.4014 GiB/s 1.4021 GiB/s]
+                 change:
+                        time:   [−12.870% −12.476% −12.008%] (p = 0.00 < 0.05)
+                        thrpt:  [+13.646% +14.254% +14.771%]
+                        Performance has improved.
+api/1T/scrypt_kdf/RustCrypto/ln=14/r=32/p=1
+                        time:   [108.81 ms 108.90 ms 108.98 ms]
+                        thrpt:  [1.1470 GiB/s 1.1479 GiB/s 1.1488 GiB/s]
+                 change:
+                        time:   [+0.5872% +1.1475% +1.7876%] (p = 0.00 < 0.05)
+                        thrpt:  [−1.7562% −1.1345% −0.5838%]
+                        Change within noise threshold.
+api/1T/scrypt_kdf/scrypt-opt/ln=14/r=32/p=2
+                        time:   [152.13 ms 152.44 ms 152.82 ms]
+                        thrpt:  [1.6359 GiB/s 1.6400 GiB/s 1.6433 GiB/s]
+                 change:
+                        time:   [−27.227% −27.061% −26.857%] (p = 0.00 < 0.05)
+                        thrpt:  [+36.719% +37.102% +37.414%]
+                        Performance has improved.
+api/1T/scrypt_kdf/RustCrypto/ln=14/r=32/p=2
+                        time:   [182.65 ms 182.86 ms 183.04 ms]
+                        thrpt:  [1.3658 GiB/s 1.3671 GiB/s 1.3687 GiB/s]
+                 change:
+                        time:   [−0.6981% −0.3882% +0.0444%] (p = 0.05 > 0.05)
+                        thrpt:  [−0.0443% +0.3898% +0.7030%]
+                        No change in performance detected.
+api/1T/scrypt_kdf/scrypt-opt/ln=14/r=32/p=4
+                        time:   [209.77 ms 210.65 ms 211.34 ms]
+                        thrpt:  [2.3659 GiB/s 2.3736 GiB/s 2.3835 GiB/s]
+                 change:
+                        time:   [−39.072% −38.748% −38.467%] (p = 0.00 < 0.05)
+                        thrpt:  [+62.513% +63.260% +64.129%]
+                        Performance has improved.
+api/1T/scrypt_kdf/RustCrypto/ln=14/r=32/p=4
+                        time:   [321.87 ms 322.72 ms 323.90 ms]
+                        thrpt:  [1.5437 GiB/s 1.5493 GiB/s 1.5534 GiB/s]
+                 change:
+                        time:   [−0.6637% −0.3941% −0.0527%] (p = 0.02 < 0.05)
+                        thrpt:  [+0.0527% +0.3957% +0.6682%]
+                        Change within noise threshold.
+
+api/1T/scrypt_kdf/scrypt-opt/ln=14/r=32/p=32
+                        time:   [996.18 ms 996.55 ms 996.95 ms]
+                        thrpt:  [4.0123 GiB/s 4.0139 GiB/s 4.0153 GiB/s]
+                 change:
+                        time:   [−56.202% −56.171% −56.144%] (p = 0.00 < 0.05)
+                        thrpt:  [+128.02% +128.16% +128.32%]
+                        Performance has improved.
+
+api/1T/scrypt_kdf/RustCrypto/ln=14/r=32/p=32
+                        time:   [2.4095 s 2.4175 s 2.4233 s]
+                        thrpt:  [1.6507 GiB/s 1.6546 GiB/s 1.6601 GiB/s]
+                 change:
+                        time:   [+1.8246% +2.2651% +2.6094%] (p = 0.00 < 0.05)
+                        thrpt:  [−2.5430% −2.2150% −1.7919%]
+                        Performance has regressed.
+
+api/16T/scrypt_kdf/scrypt-opt/ln=14/r=1/p=1
+                        time:   [1.9940 ms 2.0193 ms 2.0532 ms]
+                        thrpt:  [30.440 GiB/s 30.951 GiB/s 31.344 GiB/s]
+                 change:
+                        time:   [−23.202% −18.491% −13.638%] (p = 0.00 < 0.05)
+                        thrpt:  [+15.792% +22.686% +30.211%]
+                        Performance has improved.
+api/16T/scrypt_kdf/RustCrypto/ln=14/r=1/p=1
+                        time:   [2.7952 ms 2.8109 ms 2.8312 ms]
+                        thrpt:  [22.075 GiB/s 22.235 GiB/s 22.360 GiB/s]
+                 change:
+                        time:   [−6.8786% −1.4425% +4.3532%] (p = 0.65 > 0.05)
+                        thrpt:  [−4.1716% +1.4636% +7.3866%]
+                        No change in performance detected.
+api/16T/scrypt_kdf/scrypt-opt/ln=14/r=1/p=2
+                        time:   [3.3031 ms 3.3415 ms 3.3830 ms]
+                        thrpt:  [36.950 GiB/s 37.409 GiB/s 37.843 GiB/s]
+                 change:
+                        time:   [−41.502% −35.640% −30.123%] (p = 0.00 < 0.05)
+                        thrpt:  [+43.109% +55.375% +70.945%]
+                        Performance has improved.
+api/16T/scrypt_kdf/RustCrypto/ln=14/r=1/p=2
+                        time:   [5.6807 ms 5.8084 ms 5.9763 ms]
+                        thrpt:  [20.916 GiB/s 21.521 GiB/s 22.004 GiB/s]
+                 change:
+                        time:   [−0.1331% +3.3972% +7.4013%] (p = 0.08 > 0.05)
+                        thrpt:  [−6.8912% −3.2855% +0.1333%]
+                        No change in performance detected.
+api/16T/scrypt_kdf/scrypt-opt/ln=14/r=1/p=4
+                        time:   [5.6872 ms 5.8770 ms 6.1316 ms]
+                        thrpt:  [40.772 GiB/s 42.539 GiB/s 43.958 GiB/s]
+                 change:
+                        time:   [−49.591% −45.138% −40.611%] (p = 0.00 < 0.05)
+                        thrpt:  [+68.381% +82.276% +98.379%]
+                        Performance has improved.
+api/16T/scrypt_kdf/RustCrypto/ln=14/r=1/p=4
+                        time:   [11.194 ms 11.342 ms 11.533 ms]
+                        thrpt:  [21.677 GiB/s 22.043 GiB/s 22.333 GiB/s]
+                 change:
+                        time:   [−4.3887% −0.6834% +2.9859%] (p = 0.74 > 0.05)
+                        thrpt:  [−2.8993% +0.6881% +4.5902%]
+                        No change in performance detected.
+api/16T/scrypt_kdf/scrypt-opt/ln=14/r=1/p=32
+                        time:   [38.993 ms 39.084 ms 39.251 ms]
+                        thrpt:  [50.954 GiB/s 51.171 GiB/s 51.291 GiB/s]
+                 change:
+                        time:   [−56.456% −53.768% −51.780%] (p = 0.00 < 0.05)
+                        thrpt:  [+107.38% +116.30% +129.65%]
+                        Performance has improved.
+
+api/16T/scrypt_kdf/RustCrypto/ln=14/r=1/p=32
+                        time:   [89.602 ms 90.154 ms 90.975 ms]
+                        thrpt:  [21.984 GiB/s 22.184 GiB/s 22.321 GiB/s]
+                 change:
+                        time:   [−4.7373% −1.1121% +2.6023%] (p = 0.59 > 0.05)
+                        thrpt:  [−2.5363% +1.1246% +4.9729%]
+                        No change in performance detected.
+api/16T/scrypt_kdf/scrypt-opt/ln=14/r=8/p=1
+                        time:   [19.937 ms 20.023 ms 20.169 ms]
+                        thrpt:  [24.790 GiB/s 24.971 GiB/s 25.079 GiB/s]
+                 change:
+                        time:   [−17.620% −14.365% −11.783%] (p = 0.00 < 0.05)
+                        thrpt:  [+13.357% +16.775% +21.388%]
+                        Performance has improved.
+api/16T/scrypt_kdf/RustCrypto/ln=14/r=8/p=1
+                        time:   [23.180 ms 23.272 ms 23.401 ms]
+                        thrpt:  [21.366 GiB/s 21.485 GiB/s 21.570 GiB/s]
+                 change:
+                        time:   [−6.4935% −2.0638% +2.6383%] (p = 0.43 > 0.05)
+                        thrpt:  [−2.5705% +2.1073% +6.9444%]
+                        No change in performance detected.
+api/16T/scrypt_kdf/scrypt-opt/ln=14/r=8/p=2
+                        time:   [40.539 ms 40.639 ms 40.762 ms]
+                        thrpt:  [24.533 GiB/s 24.607 GiB/s 24.668 GiB/s]
+                 change:
+                        time:   [−22.493% −19.590% −17.164%] (p = 0.00 < 0.05)
+                        thrpt:  [+20.721% +24.363% +29.020%]
+                        Performance has improved.
+api/16T/scrypt_kdf/RustCrypto/ln=14/r=8/p=2
+                        time:   [44.165 ms 44.640 ms 45.461 ms]
+                        thrpt:  [21.997 GiB/s 22.402 GiB/s 22.642 GiB/s]
+                 change:
+                        time:   [−1.5137% +2.0435% +7.0736%] (p = 0.50 > 0.05)
+                        thrpt:  [−6.6063% −2.0026% +1.5369%]
+                        No change in performance detected.
+
+api/16T/scrypt_kdf/scrypt-opt/ln=14/r=8/p=4
+                        time:   [66.789 ms 66.906 ms 67.072 ms]
+                        thrpt:  [29.819 GiB/s 29.893 GiB/s 29.945 GiB/s]
+                 change:
+                        time:   [−27.897% −26.007% −23.877%] (p = 0.00 < 0.05)
+                        thrpt:  [+31.365% +35.147% +38.691%]
+                        Performance has improved.
+
+api/16T/scrypt_kdf/RustCrypto/ln=14/r=8/p=4
+                        time:   [87.112 ms 88.207 ms 89.871 ms]
+                        thrpt:  [22.254 GiB/s 22.674 GiB/s 22.959 GiB/s]
+                 change:
+                        time:   [−4.6864% +0.4215% +6.5998%] (p = 0.90 > 0.05)
+                        thrpt:  [−6.1912% −0.4198% +4.9169%]
+                        No change in performance detected.
+api/16T/scrypt_kdf/scrypt-opt/ln=14/r=8/p=32
+                        time:   [433.39 ms 434.23 ms 435.03 ms]
+                        thrpt:  [36.779 GiB/s 36.847 GiB/s 36.918 GiB/s]
+                 change:
+                        time:   [−40.316% −38.864% −37.481%] (p = 0.00 < 0.05)
+                        thrpt:  [+59.952% +63.570% +67.550%]
+                        Performance has improved.
+
+api/16T/scrypt_kdf/RustCrypto/ln=14/r=8/p=32
+                        time:   [714.74 ms 727.46 ms 740.13 ms]
+                        thrpt:  [21.618 GiB/s 21.994 GiB/s 22.386 GiB/s]
+                 change:
+                        time:   [−1.4449% +1.7644% +4.6661%] (p = 0.28 > 0.05)
+                        thrpt:  [−4.4581% −1.7339% +1.4661%]
+                        No change in performance detected.
+api/16T/scrypt_kdf/scrypt-opt/ln=14/r=32/p=1
+                        time:   [189.40 ms 190.90 ms 192.41 ms]
+                        thrpt:  [10.394 GiB/s 10.477 GiB/s 10.560 GiB/s]
+                 change:
+                        time:   [−9.2332% −8.0372% −6.7195%] (p = 0.00 < 0.05)
+                        thrpt:  [+7.2035% +8.7397% +10.172%]
+                        Performance has improved.
+api/16T/scrypt_kdf/RustCrypto/ln=14/r=32/p=1
+                        time:   [204.83 ms 207.15 ms 210.04 ms]
+                        thrpt:  [9.5219 GiB/s 9.6548 GiB/s 9.7641 GiB/s]
+                 change:
+                        time:   [−1.3025% +0.1659% +1.8230%] (p = 0.86 > 0.05)
+                        thrpt:  [−1.7904% −0.1656% +1.3197%]
+                        No change in performance detected.
+api/16T/scrypt_kdf/scrypt-opt/ln=14/r=32/p=2
+                        time:   [353.32 ms 355.72 ms 358.08 ms]
+                        thrpt:  [11.171 GiB/s 11.245 GiB/s 11.321 GiB/s]
+                 change:
+                        time:   [−13.723% −12.803% −11.809%] (p = 0.00 < 0.05)
+                        thrpt:  [+13.390% +14.683% +15.905%]
+                        Performance has improved.
+api/16T/scrypt_kdf/RustCrypto/ln=14/r=32/p=2
+                        time:   [281.17 ms 284.35 ms 288.43 ms]
+                        thrpt:  [13.868 GiB/s 14.067 GiB/s 14.226 GiB/s]
+                 change:
+                        time:   [−1.4228% −0.2534% +1.2916%] (p = 0.75 > 0.05)
+                        thrpt:  [−1.2752% +0.2540% +1.4434%]
+                        No change in performance detected.
+api/16T/scrypt_kdf/scrypt-opt/ln=14/r=32/p=4
+                        time:   [433.34 ms 437.91 ms 442.31 ms]
+                        thrpt:  [18.087 GiB/s 18.269 GiB/s 18.461 GiB/s]
+                 change:
+                        time:   [−15.790% −14.630% −13.637%] (p = 0.00 < 0.05)
+                        thrpt:  [+15.790% +17.137% +18.750%]
+                        Performance has improved.
+api/16T/scrypt_kdf/RustCrypto/ln=14/r=32/p=4
+                        time:   [433.92 ms 435.41 ms 436.90 ms]
+                        thrpt:  [18.311 GiB/s 18.374 GiB/s 18.436 GiB/s]
+                 change:
+                        time:   [−2.0790% −1.4638% −0.7866%] (p = 0.00 < 0.05)
+                        thrpt:  [+0.7928% +1.4855% +2.1232%]
+                        Change within noise threshold.
+
+api/16T/scrypt_kdf/scrypt-opt/ln=14/r=32/p=32
+                        time:   [1.5749 s 1.5827 s 1.5906 s]
+                        thrpt:  [40.237 GiB/s 40.436 GiB/s 40.638 GiB/s]
+                 change:
+                        time:   [−40.431% −40.064% −39.709%] (p = 0.00 < 0.05)
+                        thrpt:  [+65.862% +66.846% +67.873%]
+                        Performance has improved.
+
+api/16T/scrypt_kdf/RustCrypto/ln=14/r=32/p=32
+                        time:   [2.6605 s 2.6762 s 2.6937 s]
+                        thrpt:  [23.759 GiB/s 23.914 GiB/s 24.055 GiB/s]
+                 change:
+                        time:   [−0.9066% −0.0764% +0.7832%] (p = 0.87 > 0.05)
+                        thrpt:  [−0.7771% +0.0764% +0.9149%]
+                        No change in performance detected.
+
+api/32T/scrypt_kdf/scrypt-opt/ln=14/r=1/p=1
+                        time:   [2.5805 ms 2.5853 ms 2.5908 ms]
+                        thrpt:  [48.248 GiB/s 48.350 GiB/s 48.440 GiB/s]
+                 change:
+                        time:   [−35.625% −35.391% −35.178%] (p = 0.00 < 0.05)
+                        thrpt:  [+54.268% +54.777% +55.341%]
+                        Performance has improved.
+api/32T/scrypt_kdf/RustCrypto/ln=14/r=1/p=1
+                        time:   [4.0862 ms 4.0933 ms 4.1014 ms]
+                        thrpt:  [30.477 GiB/s 30.538 GiB/s 30.591 GiB/s]
+                 change:
+                        time:   [+0.0560% +0.4578% +0.8055%] (p = 0.02 < 0.05)
+                        thrpt:  [−0.7991% −0.4557% −0.0560%]
+                        Change within noise threshold.
+api/32T/scrypt_kdf/scrypt-opt/ln=14/r=1/p=2
+                        time:   [6.0504 ms 6.0718 ms 6.0909 ms]
+                        thrpt:  [41.045 GiB/s 41.174 GiB/s 41.320 GiB/s]
+                 change:
+                        time:   [−37.622% −37.354% −37.072%] (p = 0.00 < 0.05)
+                        thrpt:  [+58.912% +59.627% +60.312%]
+                        Performance has improved.
+api/32T/scrypt_kdf/RustCrypto/ln=14/r=1/p=2
+                        time:   [8.1471 ms 8.1940 ms 8.2457 ms]
+                        thrpt:  [30.319 GiB/s 30.510 GiB/s 30.686 GiB/s]
+                 change:
+                        time:   [+0.2432% +0.6197% +1.0432%] (p = 0.00 < 0.05)
+                        thrpt:  [−1.0324% −0.6159% −0.2426%]
+                        Change within noise threshold.
+api/32T/scrypt_kdf/scrypt-opt/ln=14/r=1/p=4
+                        time:   [10.422 ms 10.448 ms 10.478 ms]
+                        thrpt:  [47.718 GiB/s 47.857 GiB/s 47.975 GiB/s]
+                 change:
+                        time:   [−45.586% −45.365% −45.144%] (p = 0.00 < 0.05)
+                        thrpt:  [+82.296% +83.032% +83.776%]
+                        Performance has improved.
+api/32T/scrypt_kdf/RustCrypto/ln=14/r=1/p=4
+                        time:   [16.254 ms 16.271 ms 16.288 ms]
+                        thrpt:  [30.697 GiB/s 30.730 GiB/s 30.762 GiB/s]
+                 change:
+                        time:   [+0.1444% +0.4966% +0.8287%] (p = 0.01 < 0.05)
+                        thrpt:  [−0.8219% −0.4941% −0.1442%]
+                        Change within noise threshold.
+
+api/32T/scrypt_kdf/scrypt-opt/ln=14/r=1/p=32
+                        time:   [72.720 ms 72.919 ms 73.047 ms]
+                        thrpt:  [54.759 GiB/s 54.855 GiB/s 55.005 GiB/s]
+                 change:
+                        time:   [−52.298% −52.049% −51.789%] (p = 0.00 < 0.05)
+                        thrpt:  [+107.42% +108.55% +109.63%]
+                        Performance has improved.
+api/32T/scrypt_kdf/RustCrypto/ln=14/r=1/p=32
+                        time:   [129.45 ms 129.66 ms 129.89 ms]
+                        thrpt:  [30.796 GiB/s 30.850 GiB/s 30.900 GiB/s]
+                 change:
+                        time:   [+0.6956% +0.9480% +1.1873%] (p = 0.00 < 0.05)
+                        thrpt:  [−1.1734% −0.9391% −0.6908%]
+                        Change within noise threshold.
+api/32T/scrypt_kdf/scrypt-opt/ln=14/r=8/p=1
+                        time:   [37.756 ms 37.807 ms 37.854 ms]
+                        thrpt:  [26.417 GiB/s 26.450 GiB/s 26.486 GiB/s]
+                 change:
+                        time:   [−5.7536% −5.3511% −4.9106%] (p = 0.00 < 0.05)
+                        thrpt:  [+5.1642% +5.6536% +6.1049%]
+                        Performance has improved.
+api/32T/scrypt_kdf/RustCrypto/ln=14/r=8/p=1
+                        time:   [38.445 ms 38.498 ms 38.576 ms]
+                        thrpt:  [25.923 GiB/s 25.975 GiB/s 26.011 GiB/s]
+                 change:
+                        time:   [−1.5369% +0.1527% +1.8069%] (p = 0.88 > 0.05)
+                        thrpt:  [−1.7749% −0.1524% +1.5608%]
+                        No change in performance detected.
+
+api/32T/scrypt_kdf/scrypt-opt/ln=14/r=8/p=2
+                        time:   [80.187 ms 80.376 ms 80.504 ms]
+                        thrpt:  [24.844 GiB/s 24.883 GiB/s 24.942 GiB/s]
+                 change:
+                        time:   [−8.9016% −7.6974% −6.5923%] (p = 0.00 < 0.05)
+                        thrpt:  [+7.0575% +8.3393% +9.7714%]
+                        Performance has improved.
+
+api/32T/scrypt_kdf/RustCrypto/ln=14/r=8/p=2
+                        time:   [69.177 ms 69.361 ms 69.609 ms]
+                        thrpt:  [28.732 GiB/s 28.835 GiB/s 28.911 GiB/s]
+                 change:
+                        time:   [−2.2064% −0.6148% +0.9423%] (p = 0.46 > 0.05)
+                        thrpt:  [−0.9335% +0.6186% +2.2561%]
+                        No change in performance detected.
+api/32T/scrypt_kdf/scrypt-opt/ln=14/r=8/p=4
+                        time:   [130.66 ms 131.08 ms 131.45 ms]
+                        thrpt:  [30.429 GiB/s 30.516 GiB/s 30.613 GiB/s]
+                 change:
+                        time:   [−16.814% −16.402% −15.976%] (p = 0.00 < 0.05)
+                        thrpt:  [+19.014% +19.620% +20.213%]
+                        Performance has improved.
+api/32T/scrypt_kdf/RustCrypto/ln=14/r=8/p=4
+                        time:   [134.64 ms 135.06 ms 135.44 ms]
+                        thrpt:  [29.534 GiB/s 29.615 GiB/s 29.708 GiB/s]
+                 change:
+                        time:   [−0.5055% −0.1226% +0.2576%] (p = 0.54 > 0.05)
+                        thrpt:  [−0.2569% +0.1227% +0.5081%]
+                        No change in performance detected.
+
+api/32T/scrypt_kdf/scrypt-opt/ln=14/r=8/p=32
+                        time:   [858.76 ms 861.09 ms 864.09 ms]
+                        thrpt:  [37.033 GiB/s 37.162 GiB/s 37.263 GiB/s]
+                 change:
+                        time:   [−23.467% −23.244% −22.961%] (p = 0.00 < 0.05)
+                        thrpt:  [+29.804% +30.283% +30.663%]
+                        Performance has improved.
+
+api/32T/scrypt_kdf/RustCrypto/ln=14/r=8/p=32
+                        time:   [1.0264 s 1.0273 s 1.0283 s]
+                        thrpt:  [31.120 GiB/s 31.149 GiB/s 31.178 GiB/s]
+                 change:
+                        time:   [−0.6347% −0.4649% −0.2939%] (p = 0.00 < 0.05)
+                        thrpt:  [+0.2947% +0.4670% +0.6387%]
+                        Change within noise threshold.
+api/32T/scrypt_kdf/scrypt-opt/ln=14/r=32/p=1
+                        time:   [339.08 ms 342.46 ms 345.41 ms]
+                        thrpt:  [11.581 GiB/s 11.680 GiB/s 11.797 GiB/s]
+                 change:
+                        time:   [−9.0827% −7.9499% −6.9166%] (p = 0.00 < 0.05)
+                        thrpt:  [+7.4306% +8.6365% +9.9901%]
+                        Performance has improved.
+api/32T/scrypt_kdf/RustCrypto/ln=14/r=32/p=1
+                        time:   [332.20 ms 334.29 ms 336.40 ms]
+                        thrpt:  [11.891 GiB/s 11.966 GiB/s 12.041 GiB/s]
+                 change:
+                        time:   [−1.7826% −0.7409% +0.3240%] (p = 0.19 > 0.05)
+                        thrpt:  [−0.3230% +0.7464% +1.8149%]
+                        No change in performance detected.
+
+api/32T/scrypt_kdf/scrypt-opt/ln=14/r=32/p=2
+                        time:   [573.72 ms 576.66 ms 579.35 ms]
+                        thrpt:  [13.809 GiB/s 13.873 GiB/s 13.944 GiB/s]
+                 change:
+                        time:   [−10.734% −9.8140% −8.8579%] (p = 0.00 < 0.05)
+                        thrpt:  [+9.7188% +10.882% +12.025%]
+                        Performance has improved.
+
+api/32T/scrypt_kdf/RustCrypto/ln=14/r=32/p=2
+                        time:   [397.85 ms 400.22 ms 402.41 ms]
+                        thrpt:  [19.880 GiB/s 19.989 GiB/s 20.108 GiB/s]
+                 change:
+                        time:   [−0.9402% +0.0792% +1.2442%] (p = 0.91 > 0.05)
+                        thrpt:  [−1.2289% −0.0791% +0.9491%]
+                        No change in performance detected.
+
+api/32T/scrypt_kdf/scrypt-opt/ln=14/r=32/p=4
+                        time:   [761.17 ms 763.36 ms 765.36 ms]
+                        thrpt:  [20.905 GiB/s 20.960 GiB/s 21.020 GiB/s]
+                 change:
+                        time:   [−15.180% −14.666% −14.072%] (p = 0.00 < 0.05)
+                        thrpt:  [+16.377% +17.187% +17.897%]
+                        Performance has improved.
+
+api/32T/scrypt_kdf/RustCrypto/ln=14/r=32/p=4
+                        time:   [639.18 ms 641.09 ms 642.79 ms]
+                        thrpt:  [24.891 GiB/s 24.958 GiB/s 25.032 GiB/s]
+                 change:
+                        time:   [−0.7698% −0.3523% +0.0945%] (p = 0.13 > 0.05)
+                        thrpt:  [−0.0944% +0.3535% +0.7758%]
+                        No change in performance detected.
+
+api/32T/scrypt_kdf/scrypt-opt/ln=14/r=32/p=32
+                        time:   [3.3070 s 3.3099 s 3.3124 s]
+                        thrpt:  [38.642 GiB/s 38.672 GiB/s 38.706 GiB/s]
+                 change:
+                        time:   [−27.530% −27.453% −27.377%] (p = 0.00 < 0.05)
+                        thrpt:  [+37.698% +37.843% +37.989%]
+                        Performance has improved.
+
+api/32T/scrypt_kdf/RustCrypto/ln=14/r=32/p=32
+                        time:   [4.0506 s 4.0525 s 4.0544 s]
+                        thrpt:  [31.571 GiB/s 31.586 GiB/s 31.601 GiB/s]
+                 change:
+                        time:   [−0.3116% −0.1576% −0.0533%] (p = 0.01 < 0.05)
+                        thrpt:  [+0.0533% +0.1578% +0.3126%]
+                        Change within noise threshold.
+

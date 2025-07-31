@@ -104,6 +104,7 @@ impl SoftSha256 {
 pub struct Pbkdf2HmacSha256State {
     inner_digest_words: [u32; 8],
     outer_digest_words: [u32; 8],
+    previous_blocks: u64,
 }
 
 impl Pbkdf2HmacSha256State {
@@ -131,6 +132,7 @@ impl Pbkdf2HmacSha256State {
         Self {
             inner_digest_words: inner_words,
             outer_digest_words: outer_words,
+            previous_blocks: 0,
         }
     }
 
@@ -162,6 +164,7 @@ impl Pbkdf2HmacSha256State {
         Some(Self {
             inner_digest_words: inner_words,
             outer_digest_words: outer_words,
+            previous_blocks: 0,
         })
     }
 
@@ -176,7 +179,7 @@ impl Pbkdf2HmacSha256State {
         output: &mut [u8; 8],
     ) {
         let mut inner_digest_prefix = self.inner_digest_words;
-        let mut count_blocks = 1u64;
+        let mut count_blocks = 1 + self.previous_blocks;
         for salt in salts {
             let salt: &Align64<GenericArray<u8, Mul128<R>>> = salt.as_ref();
             count_blocks += Mul2::<R>::U64;
@@ -257,6 +260,26 @@ impl Pbkdf2HmacSha256State {
     }
 
     #[inline(always)]
+    /// Ingest a salt into the HMAC-SHA256 state
+    pub fn ingest_salt<R: ArrayLength + NonZero>(
+        &mut self,
+        salt: &[Align64<GenericArray<u8, Mul128<R>>>],
+    ) {
+        // SAFETY: the type is guaranteed to be 64 * 2R bytes from the type constraint above
+        // this is just to transform the new GenericArray to RustCrypto's older GenericArray
+        // they are guaranteed to be the same representation ([0; 128R])
+        let blocks = unsafe {
+            core::slice::from_raw_parts::<RcGenericArray<u8, rc_generic_array::typenum::U64>>(
+                salt.as_ptr().cast(),
+                Mul2::<R>::USIZE * salt.len(),
+            )
+        };
+
+        sha2::compress256(&mut self.inner_digest_words, blocks);
+        self.previous_blocks += Mul2::<R>::U64 * salt.len() as u64;
+    }
+
+    #[inline(always)]
     /// Gather salt from multiple RoMix buffers and emit the HMAC-SHA256 output
     pub fn emit_gather<R: ArrayLength + NonZero, T: AsRef<Align64<Block<R>>>>(
         &self,
@@ -264,7 +287,7 @@ impl Pbkdf2HmacSha256State {
         output: &mut [u8],
     ) {
         let mut inner_digest_prefix = self.inner_digest_words;
-        let mut count_blocks = 1u64;
+        let mut count_blocks = self.previous_blocks + 1;
         for salt in salts {
             let salt: &Align64<GenericArray<u8, Mul128<R>>> = salt.as_ref();
             count_blocks += Mul2::<R>::U64;
@@ -323,18 +346,28 @@ impl Pbkdf2HmacSha256State {
         salt: &[u8],
         output: impl IntoIterator<Item = T>,
     ) {
+        self.emit_scatter_offset(salt, output, 0)
+    }
+
+    /// Compute the HMAC-SHA256 output for a given salt and scatter to an iterator of output RoMix buffers
+    pub fn emit_scatter_offset<R: ArrayLength + NonZero, T: AsMut<Align64<Block<R>>>>(
+        &self,
+        salt: &[u8],
+        output: impl IntoIterator<Item = T>,
+        offset: u32,
+    ) {
         let mut inner_digest = SoftSha256 {
             words: self.inner_digest_words,
             buf: Default::default(),
             ptr: 0,
-            prev_blocks: 1,
+            prev_blocks: self.previous_blocks + 1,
         };
         inner_digest.update(salt);
         let mut tmp_block_outer = [crypto_common::Block::<sha2::Sha256>::default()];
         tmp_block_outer[0][32] = 0x80;
         tmp_block_outer[0][62] = 0x03;
 
-        let mut idx = 0u32;
+        let mut idx = offset;
         for mut output in output {
             let output_item = output.as_mut();
 
