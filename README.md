@@ -21,11 +21,10 @@ Portable-simd support requires a nightly compiler and `--features portable-simd`
 - Password Cracking
 - System Benchmarking
 
-This is _NOT_ audited cryptography! Don't use it for password hashing, etc.
+Although we have a large suite of tests and validation self-tests, this is _NOT_ audited cryptography and thus I can't recommend it for password hashing. You are responsible for your own security.
 
 ## Limitations
 
-- `R` must be a compile time constant or monomorphized, the demo binary has code for R=1..=32 and R=64.
 - For mining or cases with low difficulty you might want to bring your own multi-buffer PBKDF core, the built in `Pbkdf2HmacSha256State` is designed for moderate to high difficulty cases where it is not called a lot. There are raw buffer APIs that allow you to do it easily. For really really low difficulty where the problem becomes more about data locality than software pipelining this program is may not be optimal, please compare with a full multi-buffer implementation.
 
 ## Demo Binary
@@ -45,10 +44,12 @@ echo -n "password" | scrypt-opt compute -s NaCl --cf 10 -r 8 -p 16
 /bq+HJ00cgB4VucZDQHp/nxq18vII3gw53N2Y0s3MWIurzDZLiKjiG/xCSedmDDaxyevuUqD7m2DYMvfoswGQA== 
 ```
 
-Solve a 💥PoW! Bot Deterrent PoW:
+Solve a 💥PoW! Bot Deterrent style PoW with a target hash of `0002` and output key length of 16 bytes:
+
+Offset is calculated as the number of output nibbles minus the number of target nibbles. (32 - 4 = 28)
 
 ```sh
-> scrypt-opt --num-threads 16 pow --target 0002 --salt KTlmPG9GFcM= --cf 14 --r 8
+> scrypt-opt --num-threads 16 pow --target 0002 --salt KTlmPG9GFcM= --cf 14 --r 8 --offset 28
 spawning 16 threads for an estimated iteration count of 10922
 Nonce   Result  N       R       EstimatedCands  RealCands       Luck%   RealCPS
 cf40000000000000        08402d18d2ba3be9ee4b620f8a840000        16384   8       10922    16975   21.13   1310.7
@@ -70,14 +71,18 @@ Each hash is pipelined into 4 steps:
 2. For each of the $P$ chunks: Run $RoMix_{Front}$ then $RoMix_{Back}$.
 3. "Gather" all the blocks into a single HMAC-SHA-256 output.
 
-These APIs facilitate these:
+The [`RoMix`] trait is the main entry point for the kernel. The [`RoMix::ro_mix_front`], [`RoMix::ro_mix_back`] and [`RoMix::ro_mix_interleaved`] methods perform the $RoMix_{Front}$, $RoMix_{Back}$ and concurrent $RoMix_{Front}$ and $RoMix_{Back}$ operations respectively.
 
-- `Block<R>` represents a 512-bit block in u32 form, it can be transmuted to/from a `BlockU8<R>` which is a 64-byte block in u8 form.
+The [`compat`] module provides a C, WASM and Rust APIs that are push-button compatible with off the shelf libraries.
+
+The [`fixed_r`] module allows you to compile an optimized kernel for a specific $R$ value, with more rich APIs available:
+
+- `Block<R>` represents a salsa20 (512-bit) block in u8 form.
 - `BufferSet::new`, `BufferSet::new_boxed`,  `BufferSet::new_maybe_huge_slice` create a new buffer set using an existing buffer or a new heap or huge page backed buffer. `BufferSet::minimum_blocks` returns the minimum number of blocks required to be allocated for a given Cost Factor (log2(N)).
 - `BufferSet::scrypt_ro_mix` performs the $RoMix_{Front}$ and then $RoMix_{Back}$ operation serially.
-- `BufferSet::pipeline_start` performs the $RoMix_{Front}$ operation.
-- `BufferSet::pipeline_drain` performs the $RoMix_{Back}$ operation.
-- `BufferSet::scrypt_ro_mix_interleaved` takes an auxiliary buffer set and performs the $RoMix_{Back}$ operation on _Self_ and $RoMix_{Front}$ on the auxiliary buffer set.
+- `BufferSet::ro_mix_front` performs the $RoMix_{Front}$ operation.
+- `BufferSet::ro_mix_back` performs the $RoMix_{Back}$ operation.
+- `BufferSet::ro_mix_interleaved` takes an auxiliary buffer set and performs the $RoMix_{Back}$ operation on _Self_ and $RoMix_{Front}$ on the auxiliary buffer set.
 - `BufferSet::pipeline` is a convenience method that takes an iterator implementing `PipelineContext` trait and performs the pipeline by calling into `PipelineContext::begin` and `PipelineContext::drain` at appropriate times. `PipelineContext` is already implemented for `(&'a Align64<Block<R>>, &'b mut Align64<Block<R>>)`, which simplifies the pipelining for computing hashes with a large $P$ (see [examples/large_p.rs](examples/large_p.rs)).
 - `Pbkdf2HmacSha256State` stores the internal state of the HMAC-SHA-256 operation (512-bit, copyable)
 - `Pbkdf2HmacSha256State::new` and `Pbkdf2HmacSha256State::new_short` create a new state from a password.
@@ -171,7 +176,7 @@ WASM tests are performed on Chromium 138.0.7204.157, worker message passing over
 
 ## Usage Example
 
-See [examples](examples) for usage examples.
+See [examples](examples/) for usage examples.
 
 ## Strategy Overview
 

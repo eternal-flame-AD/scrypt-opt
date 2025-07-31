@@ -88,13 +88,11 @@ pub trait BlockType: Clone + Copy {
 impl BlockType for core::arch::x86_64::__m512i {
     #[inline(always)]
     unsafe fn read_from_ptr(ptr: *const Self) -> Self {
-        use core::arch::x86_64::*;
-        unsafe { _mm512_load_si512(ptr.cast::<__m512i>()) }
+        unsafe { core::ptr::read(ptr.cast()) }
     }
     #[inline(always)]
     unsafe fn write_to_ptr(self, ptr: *mut Self) {
-        use core::arch::x86_64::*;
-        unsafe { _mm512_store_si512(ptr.cast::<__m512i>(), self) }
+        unsafe { core::ptr::write(ptr.cast(), self) }
     }
     #[inline(always)]
     fn xor_with(&mut self, other: Self) {
@@ -125,25 +123,11 @@ impl BlockType for [core::arch::x86_64::__m256i; 2] {
     }
 }
 
-#[allow(unused_mut)]
 impl BlockType for Align64<[u32; 16]> {
     unsafe fn read_from_ptr(ptr: *const Self) -> Self {
-        let mut ret = unsafe { ptr.read() };
-
-        #[cfg(target_endian = "big")]
-        for i in 0..16 {
-            ret.0[i] = ret.0[i].swap_bytes();
-        }
-
-        #[cfg(target_endian = "little")]
-        return ret;
+        unsafe { ptr.read() }
     }
     unsafe fn write_to_ptr(mut self, ptr: *mut Self) {
-        #[cfg(target_endian = "big")]
-        for i in 0..16 {
-            self.0[i] = self.0[i].swap_bytes();
-        }
-
         unsafe { ptr.write(self) }
     }
     fn xor_with(&mut self, other: Self) {
@@ -156,24 +140,10 @@ impl BlockType for Align64<[u32; 16]> {
 #[cfg(feature = "portable-simd")]
 impl BlockType for core::simd::u32x16 {
     unsafe fn read_from_ptr(ptr: *const Self) -> Self {
-        let ret = unsafe { ptr.read() };
-
-        #[cfg(target_endian = "big")]
-        return ret.swap_bytes();
-
-        #[cfg(target_endian = "little")]
-        return ret;
+        unsafe { ptr.read() }
     }
     unsafe fn write_to_ptr(self, ptr: *mut Self) {
-        #[cfg(target_endian = "big")]
-        unsafe {
-            ptr.write(self.swap_bytes())
-        };
-
-        #[cfg(target_endian = "little")]
-        unsafe {
-            ptr.write(self)
-        };
+        unsafe { ptr.write(self) }
     }
     fn xor_with(&mut self, other: Self) {
         *self ^= other;
@@ -181,7 +151,7 @@ impl BlockType for core::simd::u32x16 {
 }
 
 /// A trait for salsa20 block types
-pub(crate) trait Salsa20 {
+pub trait Salsa20 {
     /// The number of lanes
     type Lanes: ArrayLength;
     /// The block type
@@ -196,6 +166,8 @@ pub(crate) trait Salsa20 {
     /// Read block(s)
     fn read(ptr: GenericArray<&Self::Block, Self::Lanes>) -> Self;
     /// Write block(s) back
+    ///
+    /// The original/saved value must be present in the pointer.
     fn write(&self, ptr: GenericArray<&mut Self::Block, Self::Lanes>);
     /// Apply the keystream to the block(s)
     fn keystream<const ROUND_PAIRS: usize>(&mut self);
@@ -210,6 +182,20 @@ pub struct BlockScalar<Lanes: ArrayLength> {
 impl<Lanes: ArrayLength> Salsa20 for BlockScalar<Lanes> {
     type Lanes = Lanes;
     type Block = Align64<[u32; 16]>;
+
+    #[cfg(target_endian = "big")]
+    fn shuffle_in(ptr: &mut Align64<[u32; 16]>) {
+        for i in 0..16 {
+            ptr.0[i] = ptr.0[i].swap_bytes();
+        }
+    }
+
+    #[cfg(target_endian = "big")]
+    fn shuffle_out(ptr: &mut Align64<[u32; 16]>) {
+        for i in 0..16 {
+            ptr.0[i] = ptr.0[i].swap_bytes();
+        }
+    }
 
     #[inline(always)]
     fn read(ptr: GenericArray<&Self::Block, Lanes>) -> Self {
@@ -283,12 +269,20 @@ impl Salsa20 for BlockPortableSimd {
     #[inline(always)]
     fn shuffle_in(ptr: &mut Align64<[u32; 16]>) {
         let pivoted = Pivot::swizzle(u32x16::from_array(ptr.0));
+
+        #[cfg(target_endian = "big")]
+        let pivoted = pivoted.swap_bytes();
+
         ptr.0 = *pivoted.as_array();
     }
 
     #[inline(always)]
     fn shuffle_out(ptr: &mut Align64<[u32; 16]>) {
         let pivoted = Inverse::<_, Pivot>::swizzle(u32x16::from_array(ptr.0));
+
+        #[cfg(target_endian = "big")]
+        let pivoted = pivoted.swap_bytes();
+
         ptr.0 = *pivoted.as_array();
     }
 
@@ -446,9 +440,13 @@ mod tests {
         let test_input: Align64<[u32; 16]> = Align64(core::array::from_fn(|i| i as u32));
         let mut expected = test_input.clone();
 
-        let mut block = BlockScalar::<U1>::read(GenericArray::from_array([&expected]));
+        let mut test_input_scalar_shuffled = test_input.clone();
+        BlockScalar::<U1>::shuffle_in(&mut test_input_scalar_shuffled);
+        let mut block =
+            BlockScalar::<U1>::read(GenericArray::from_array([&test_input_scalar_shuffled]));
         block.keystream::<ROUND_PAIRS>();
         block.write(GenericArray::from_array([&mut expected]));
+        BlockScalar::<U1>::shuffle_out(&mut expected);
 
         let mut test_input_shuffled = test_input.clone();
 
@@ -474,12 +472,21 @@ mod tests {
         let mut expected0 = test_input0.clone();
         let mut expected1 = test_input1.clone();
 
-        let mut block0 = BlockScalar::<U1>::read(GenericArray::from_array([&test_input0]));
-        let mut block1 = BlockScalar::<U1>::read(GenericArray::from_array([&test_input1]));
+        let mut test_input0_scalar_shuffled = test_input0.clone();
+        let mut test_input1_scalar_shuffled = test_input1.clone();
+        BlockScalar::<U1>::shuffle_in(&mut test_input0_scalar_shuffled);
+        BlockScalar::<U1>::shuffle_in(&mut test_input1_scalar_shuffled);
+
+        let mut block0 =
+            BlockScalar::<U1>::read(GenericArray::from_array([&test_input0_scalar_shuffled]));
+        let mut block1 =
+            BlockScalar::<U1>::read(GenericArray::from_array([&test_input1_scalar_shuffled]));
         block0.keystream::<ROUND_PAIRS>();
         block1.keystream::<ROUND_PAIRS>();
         block0.write(GenericArray::from_array([&mut expected0]));
         block1.write(GenericArray::from_array([&mut expected1]));
+        BlockScalar::<U1>::shuffle_out(&mut expected0);
+        BlockScalar::<U1>::shuffle_out(&mut expected1);
 
         let mut test_input0_shuffled = test_input0.clone();
         let mut test_input1_shuffled = test_input1.clone();

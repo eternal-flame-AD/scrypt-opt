@@ -1,0 +1,145 @@
+api/1T/scrypt_kdf/scrypt-opt/ln=14/r=1/p=1
+                        time:   [1.8890 ms 1.8935 ms 1.9006 ms]
+                        thrpt:  [2.0553 GiB/s 2.0630 GiB/s 2.0679 GiB/s]
+api/1T/scrypt_kdf/RustCrypto/ln=14/r=1/p=1
+                        time:   [2.9095 ms 2.9212 ms 2.9346 ms]
+                        thrpt:  [1.3311 GiB/s 1.3372 GiB/s 1.3426 GiB/s]
+api/1T/scrypt_kdf/scrypt-opt/ln=14/r=1/p=2
+                        time:   [3.0191 ms 3.0247 ms 3.0368 ms]
+                        thrpt:  [2.5726 GiB/s 2.5829 GiB/s 2.5877 GiB/s]
+api/1T/scrypt_kdf/RustCrypto/ln=14/r=1/p=2
+                        time:   [5.7852 ms 5.8041 ms 5.8391 ms]
+                        thrpt:  [1.3380 GiB/s 1.3460 GiB/s 1.3504 GiB/s]
+api/1T/scrypt_kdf/scrypt-opt/ln=14/r=1/p=4
+                        time:   [5.2456 ms 5.2694 ms 5.2920 ms]
+                        thrpt:  [2.9526 GiB/s 2.9652 GiB/s 2.9787 GiB/s]
+api/1T/scrypt_kdf/RustCrypto/ln=14/r=1/p=4
+                        time:   [11.532 ms 11.575 ms 11.623 ms]
+                        thrpt:  [1.3443 GiB/s 1.3499 GiB/s 1.3550 GiB/s]
+api/1T/scrypt_kdf/scrypt-opt/ln=14/r=1/p=32
+                        time:   [36.156 ms 36.271 ms 36.458 ms]
+                        thrpt:  [3.4286 GiB/s 3.4462 GiB/s 3.4572 GiB/s]
+api/1T/scrypt_kdf/RustCrypto/ln=14/r=1/p=32
+                        time:   [91.604 ms 92.381 ms 93.345 ms]
+                        thrpt:  [1.3391 GiB/s 1.3531 GiB/s 1.3646 GiB/s]
+api/1T/scrypt_kdf/scrypt-opt/ln=14/r=8/p=1
+                        time:   [13.646 ms 13.672 ms 13.711 ms]
+                        thrpt:  [2.2792 GiB/s 2.2857 GiB/s 2.2901 GiB/s]
+api/1T/scrypt_kdf/RustCrypto/ln=14/r=8/p=1
+                        time:   [20.351 ms 20.497 ms 20.666 ms]
+                        thrpt:  [1.5121 GiB/s 1.5246 GiB/s 1.5355 GiB/s]
+api/1T/scrypt_kdf/scrypt-opt/ln=14/r=8/p=2
+                        time:   [22.241 ms 22.307 ms 22.407 ms]
+                        thrpt:  [2.7893 GiB/s 2.8018 GiB/s 2.8101 GiB/s]
+api/1T/scrypt_kdf/RustCrypto/ln=14/r=8/p=2
+                        time:   [40.561 ms 40.897 ms 41.225 ms]
+                        thrpt:  [1.5161 GiB/s 1.5282 GiB/s 1.5409 GiB/s]
+api/1T/scrypt_kdf/scrypt-opt/ln=14/r=8/p=4
+                        time:   [37.997 ms 38.083 ms 38.204 ms]
+                        thrpt:  [3.2719 GiB/s 3.2823 GiB/s 3.2897 GiB/s]
+api/1T/scrypt_kdf/RustCrypto/ln=14/r=8/p=4
+                        time:   [82.075 ms 82.366 ms 82.705 ms]
+                        thrpt:  [1.5114 GiB/s 1.5176 GiB/s 1.5230 GiB/s]
+api/1T/scrypt_kdf/scrypt-opt/ln=14/r=8/p=32
+                        time:   [257.42 ms 257.82 ms 258.23 ms]
+                        thrpt:  [3.8725 GiB/s 3.8786 GiB/s 3.8848 GiB/s]
+api/1T/scrypt_kdf/RustCrypto/ln=14/r=8/p=32
+                        time:   [652.22 ms 655.07 ms 658.20 ms]
+                        thrpt:  [1.5193 GiB/s 1.5266 GiB/s 1.5332 GiB/s]
+api/1T/scrypt_kdf/scrypt-opt/ln=14/r=32/p=1
+                        time:   [87.219 ms 87.446 ms 87.813 ms]
+                        thrpt:  [1.4235 GiB/s 1.4295 GiB/s 1.4332 GiB/s]
+api/1T/scrypt_kdf/RustCrypto/ln=14/r=32/p=1
+                        time:   [115.06 ms 115.39 ms 115.80 ms]
+                        thrpt:  [1.0795 GiB/s 1.0833 GiB/s 1.0864 GiB/s]
+api/1T/scrypt_kdf/scrypt-opt/ln=14/r=32/p=2
+                        time:   [154.37 ms 154.90 ms 155.41 ms]
+                        thrpt:  [1.6086 GiB/s 1.6139 GiB/s 1.6195 GiB/s]
+api/1T/scrypt_kdf/RustCrypto/ln=14/r=32/p=2
+                        time:   [202.02 ms 202.93 ms 203.50 ms]
+                        thrpt:  [1.2285 GiB/s 1.2319 GiB/s 1.2375 GiB/s]
+api/1T/scrypt_kdf/scrypt-opt/ln=14/r=32/p=4
+                        time:   [216.90 ms 217.42 ms 217.87 ms]
+                        thrpt:  [2.2950 GiB/s 2.2997 GiB/s 2.3052 GiB/s]
+api/1T/scrypt_kdf/RustCrypto/ln=14/r=32/p=4
+                        time:   [370.73 ms 372.38 ms 373.57 ms]
+                        thrpt:  [1.3385 GiB/s 1.3427 GiB/s 1.3487 GiB/s]
+api/1T/scrypt_kdf/scrypt-opt/ln=14/r=32/p=32
+                        time:   [1.0621 s 1.0647 s 1.0690 s]
+                        thrpt:  [3.7418 GiB/s 3.7570 GiB/s 3.7661 GiB/s]
+api/1T/scrypt_kdf/RustCrypto/ln=14/r=32/p=32
+                        time:   [2.7087 s 2.7198 s 2.7310 s]
+                        thrpt:  [1.4647 GiB/s 1.4707 GiB/s 1.4767 GiB/s]
+api/16T/scrypt_kdf/scrypt-opt/ln=14/r=1/p=1
+                        time:   [1.9965 ms 2.0276 ms 2.0705 ms]
+                        thrpt:  [30.187 GiB/s 30.824 GiB/s 31.305 GiB/s]
+api/16T/scrypt_kdf/RustCrypto/ln=14/r=1/p=1
+                        time:   [3.1362 ms 3.1938 ms 3.2676 ms]
+                        thrpt:  [19.127 GiB/s 19.569 GiB/s 19.929 GiB/s]
+api/16T/scrypt_kdf/scrypt-opt/ln=14/r=1/p=2
+                        time:   [3.3518 ms 3.4610 ms 3.6369 ms]
+                        thrpt:  [34.370 GiB/s 36.117 GiB/s 37.293 GiB/s]
+api/16T/scrypt_kdf/RustCrypto/ln=14/r=1/p=2
+                        time:   [6.3984 ms 6.5435 ms 6.7169 ms]
+                        thrpt:  [18.610 GiB/s 19.103 GiB/s 19.536 GiB/s]
+api/16T/scrypt_kdf/scrypt-opt/ln=14/r=1/p=4
+                        time:   [5.8127 ms 5.8801 ms 5.9731 ms]
+                        thrpt:  [41.854 GiB/s 42.516 GiB/s 43.009 GiB/s]
+api/16T/scrypt_kdf/RustCrypto/ln=14/r=1/p=4
+                        time:   [12.546 ms 12.662 ms 12.851 ms]
+                        thrpt:  [19.454 GiB/s 19.744 GiB/s 19.926 GiB/s]
+api/16T/scrypt_kdf/scrypt-opt/ln=14/r=1/p=32
+                        time:   [40.381 ms 40.807 ms 41.374 ms]
+                        thrpt:  [48.340 GiB/s 49.012 GiB/s 49.528 GiB/s]
+api/16T/scrypt_kdf/RustCrypto/ln=14/r=1/p=32
+                        time:   [101.41 ms 102.44 ms 103.54 ms]
+                        thrpt:  [19.315 GiB/s 19.523 GiB/s 19.722 GiB/s]
+api/16T/scrypt_kdf/scrypt-opt/ln=14/r=8/p=1
+                        time:   [20.113 ms 20.146 ms 20.199 ms]
+                        thrpt:  [24.754 GiB/s 24.818 GiB/s 24.860 GiB/s]
+api/16T/scrypt_kdf/RustCrypto/ln=14/r=8/p=1
+                        time:   [25.676 ms 26.027 ms 26.416 ms]
+                        thrpt:  [18.928 GiB/s 19.211 GiB/s 19.473 GiB/s]
+api/16T/scrypt_kdf/scrypt-opt/ln=14/r=8/p=2
+                        time:   [41.255 ms 41.325 ms 41.421 ms]
+                        thrpt:  [24.142 GiB/s 24.198 GiB/s 24.240 GiB/s]
+api/16T/scrypt_kdf/RustCrypto/ln=14/r=8/p=2
+                        time:   [49.507 ms 50.056 ms 50.946 ms]
+                        thrpt:  [19.629 GiB/s 19.978 GiB/s 20.199 GiB/s]
+api/16T/scrypt_kdf/scrypt-opt/ln=14/r=8/p=4
+                        time:   [68.524 ms 68.613 ms 68.707 ms]
+                        thrpt:  [29.109 GiB/s 29.149 GiB/s 29.187 GiB/s]
+api/16T/scrypt_kdf/RustCrypto/ln=14/r=8/p=4
+                        time:   [100.22 ms 101.66 ms 103.29 ms]
+                        thrpt:  [19.363 GiB/s 19.674 GiB/s 19.955 GiB/s]
+api/16T/scrypt_kdf/scrypt-opt/ln=14/r=8/p=32
+                        time:   [450.53 ms 451.75 ms 452.91 ms]
+                        thrpt:  [35.327 GiB/s 35.418 GiB/s 35.514 GiB/s]
+api/16T/scrypt_kdf/RustCrypto/ln=14/r=8/p=32
+                        time:   [801.46 ms 815.92 ms 830.66 ms]
+                        thrpt:  [19.262 GiB/s 19.610 GiB/s 19.964 GiB/s]
+api/16T/scrypt_kdf/scrypt-opt/ln=14/r=32/p=1
+                        time:   [193.62 ms 194.90 ms 196.10 ms]
+                        thrpt:  [10.199 GiB/s 10.262 GiB/s 10.330 GiB/s]
+api/16T/scrypt_kdf/RustCrypto/ln=14/r=32/p=1
+                        time:   [215.22 ms 217.22 ms 219.15 ms]
+                        thrpt:  [9.1260 GiB/s 9.2073 GiB/s 9.2927 GiB/s]
+api/16T/scrypt_kdf/scrypt-opt/ln=14/r=32/p=2
+                        time:   [360.75 ms 364.07 ms 367.23 ms]
+                        thrpt:  [10.892 GiB/s 10.987 GiB/s 11.088 GiB/s]
+api/16T/scrypt_kdf/RustCrypto/ln=14/r=32/p=2
+                        time:   [302.49 ms 304.70 ms 306.74 ms]
+                        thrpt:  [13.040 GiB/s 13.128 GiB/s 13.224 GiB/s]
+api/16T/scrypt_kdf/scrypt-opt/ln=14/r=32/p=4
+                        time:   [390.01 ms 392.10 ms 394.23 ms]
+                        thrpt:  [20.293 GiB/s 20.403 GiB/s 20.512 GiB/s]
+api/16T/scrypt_kdf/RustCrypto/ln=14/r=32/p=4
+                        time:   [474.83 ms 479.51 ms 483.98 ms]
+                        thrpt:  [16.530 GiB/s 16.684 GiB/s 16.848 GiB/s]
+api/16T/scrypt_kdf/scrypt-opt/ln=14/r=32/p=32
+                        time:   [1.6096 s 1.6168 s 1.6236 s]
+                        thrpt:  [39.418 GiB/s 39.583 GiB/s 39.762 GiB/s]
+api/16T/scrypt_kdf/RustCrypto/ln=14/r=32/p=32
+                        time:   [3.0274 s 3.0361 s 3.0477 s]
+                        thrpt:  [20.999 GiB/s 21.079 GiB/s 21.140 GiB/s]
+

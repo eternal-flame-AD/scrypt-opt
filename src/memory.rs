@@ -1,31 +1,27 @@
 use core::ops::{Deref, DerefMut};
 
-use generic_array::{ArrayLength, typenum::NonZero};
-
-use crate::{Block, BlockU8};
-
 #[repr(align(64))]
 #[derive(Default, Debug, PartialEq, Eq, Clone, Copy)]
 /// Align to 64 bytes
 pub struct Align64<T>(pub T);
 
-impl<R: ArrayLength + NonZero> Align64<Block<R>> {
-    /// Perform a reference cast to an Align64<Block<R>> without checking the alignment.
+impl<T> Align64<T> {
+    /// Perform a reference cast to an [`Align64<Block<R>>`] without checking the alignment.
     ///
     /// # Safety
     /// This function is unsafe because it does not check the alignment of the input pointer.
     #[inline(always)]
-    pub const unsafe fn new_unchecked(input: &R) -> &Self {
-        unsafe { &*(input as *const R as *const Self) }
+    pub const unsafe fn new_unchecked(input: &T) -> &Self {
+        unsafe { &*(input as *const T as *const Self) }
     }
 
-    /// Perform a reference cast to an Align64<Block<R>>.
+    /// Perform a reference cast to an [`Align64<Block<R>>`].
     ///
     /// # Panics
     ///
     /// Panics if the input pointer is not aligned to 64 bytes.
-    pub fn new(input: &R) -> &Self {
-        let ptr = input as *const R;
+    pub fn new(input: &T) -> &Self {
+        let ptr = input as *const T;
         assert_eq!(
             ptr.align_offset(64),
             0,
@@ -34,40 +30,28 @@ impl<R: ArrayLength + NonZero> Align64<Block<R>> {
         unsafe { Self::new_unchecked(input) }
     }
 
-    /// Perform a mutable reference cast to an Align64<Block<R>> without checking the alignment.
+    /// Perform a mutable reference cast to an [`Align64<Block<R>>`] without checking the alignment.
     ///
     /// # Safety
     /// This function is unsafe because it does not check the alignment of the input pointer.
     #[inline(always)]
-    pub const unsafe fn new_mut_unchecked(input: &mut R) -> &mut Self {
-        unsafe { &mut *(input as *mut R as *mut Self) }
+    pub const unsafe fn new_mut_unchecked(input: &mut T) -> &mut Self {
+        unsafe { &mut *(input as *mut T as *mut Self) }
     }
 
-    /// Perform a mutable reference cast to an Align64<Block<R>>.
+    /// Perform a mutable reference cast to an [`Align64<Block<R>>`].
     ///
     /// # Panics
     ///
     /// Panics if the input pointer is not aligned to 64 bytes.
-    pub fn new_mut(input: &mut R) -> &mut Self {
-        let ptr = input as *mut R;
+    pub fn new_mut(input: &mut T) -> &mut Self {
+        let ptr = input as *mut T;
         assert_eq!(
             ptr.align_offset(64),
             0,
             "Input pointer is not aligned to 64 bytes"
         );
         unsafe { Self::new_mut_unchecked(input) }
-    }
-
-    /// Transmute the block buffer to a u8 array
-    #[inline(always)]
-    pub const fn transmute_as_u8(&self) -> &Align64<BlockU8<R>> {
-        unsafe { generic_array::const_transmute(&self.0) }
-    }
-
-    /// Transmute the block buffer to a mutable u8 array
-    #[inline(always)]
-    pub const fn transmute_as_u8_mut(&mut self) -> &mut Align64<BlockU8<R>> {
-        unsafe { generic_array::const_transmute(&mut self.0) }
     }
 }
 

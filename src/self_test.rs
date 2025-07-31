@@ -4,18 +4,20 @@ use core::marker::PhantomData;
 use generic_array::typenum::{B1, IsGreaterOrEqual};
 use generic_array::{
     ArrayLength, GenericArray,
-    typenum::{NonZero, PowerOfTwo, U1, U2, U4, U8, U10, U14, U16, U20, U64, Unsigned},
+    typenum::{NonZero, U1, U2, U3, U4, U8, U10, U14, U16, U20, U53, U64, Unsigned},
 };
 
 use crate::{
-    Align64, Block, BufferSet, ValidCostFactor, pbkdf2_1::Pbkdf2HmacSha256State,
+    Align64, ValidCostFactor,
+    fixed_r::{Block, BufferSet},
+    pbkdf2_1::Pbkdf2HmacSha256State,
     pipeline::PipelineContext,
 };
 
 /// Test case for P = 1, N = 16, R = 1 in the scrypt specification
-pub struct CastN16R1P1;
+pub struct CaseN16R1P1;
 
-impl CaseP1 for CastN16R1P1 {
+impl CaseP1 for CaseN16R1P1 {
     type OutputLen = U64;
     type CF = U4;
     type R = U1;
@@ -31,9 +33,9 @@ impl CaseP1 for CastN16R1P1 {
 }
 
 /// Test case for P = 1, N = 16384, R = 8 in the scrypt specification
-pub struct CastN16384R8P1;
+pub struct CaseN16384R8P1;
 
-impl CaseP1 for CastN16384R8P1 {
+impl CaseP1 for CaseN16384R8P1 {
     type OutputLen = U64;
     type CF = U14;
     type R = U8;
@@ -49,9 +51,9 @@ impl CaseP1 for CastN16384R8P1 {
 }
 
 /// Test case for P = 1, N = 1048576, R = 8 in the scrypt specification
-pub struct CastN1048576R8P1;
+pub struct CaseN1048576R8P1;
 
-impl CaseP1 for CastN1048576R8P1 {
+impl CaseP1 for CaseN1048576R8P1 {
     type OutputLen = U64;
     type CF = U20;
     type R = U8;
@@ -67,9 +69,9 @@ impl CaseP1 for CastN1048576R8P1 {
 }
 
 /// Supplementary case for P = 2, N = 1024, R = 1
-pub struct CastN1024R1P2;
+pub struct CaseN1024R1P2;
 
-impl Case for CastN1024R1P2 {
+impl Case for CaseN1024R1P2 {
     type OutputLen = U64;
     type CF = U10;
     type R = U1;
@@ -87,10 +89,10 @@ impl Case for CastN1024R1P2 {
 
 #[cfg(feature = "alloc")]
 /// Test case for P = 16, N = 1024, R = 8 in the scrypt specification
-pub struct CastN1024R8P16;
+pub struct CaseN1024R8P16;
 
 #[cfg(feature = "alloc")]
-impl Case for CastN1024R8P16 {
+impl Case for CaseN1024R8P16 {
     type P = U16;
     type OutputLen = U64;
     type CF = U10;
@@ -103,6 +105,43 @@ impl Case for CastN1024R8P16 {
         0x31, 0x62, 0x2e, 0xaf, 0x30, 0xd9, 0x2e, 0x22, 0xa3, 0x88, 0x6f, 0xf1, 0x09, 0x27, 0x9d,
         0x98, 0x30, 0xda, 0xc7, 0x27, 0xaf, 0xb9, 0x4a, 0x83, 0xee, 0x6d, 0x83, 0x60, 0xcb, 0xdf,
         0xa2, 0xcc, 0x06, 0x40,
+    ]);
+}
+
+/// Supplementary case for exotic parameters
+pub struct CaseN1024R53P1;
+
+impl CaseP1 for CaseN1024R53P1 {
+    type OutputLen = U64;
+    type CF = U10;
+    type R = U53;
+    const PASSWORD: &'static [u8] = b"password";
+    const SALT: &'static [u8] = b"NaCl";
+    const KNOWN_ANSWER: GenericArray<u8, Self::OutputLen> = GenericArray::from_array([
+        0x7c, 0x34, 0x45, 0xf8, 0x73, 0xde, 0x41, 0x9a, 0x96, 0xd7, 0xa3, 0x20, 0x51, 0xd1, 0xb4,
+        0x8f, 0xb3, 0xde, 0x94, 0x8d, 0xac, 0x06, 0x78, 0x57, 0xf3, 0x7a, 0x58, 0xdf, 0x2d, 0x71,
+        0xeb, 0x4d, 0x4b, 0xeb, 0x87, 0xd6, 0xe8, 0x7d, 0x70, 0xd4, 0xb7, 0xa5, 0x86, 0x66, 0x99,
+        0xe4, 0x7a, 0xcd, 0x09, 0x4e, 0x93, 0x4e, 0xc4, 0xa1, 0xd7, 0xb8, 0x7d, 0x53, 0x93, 0x10,
+        0x7e, 0x75, 0xdc, 0x70,
+    ]);
+}
+
+/// Supplementary case for exotic parameters
+pub struct CaseN1024R53P3;
+
+impl Case for CaseN1024R53P3 {
+    type P = U3;
+    type OutputLen = U64;
+    type CF = U10;
+    type R = U53;
+    const PASSWORD: &'static [u8] = b"password";
+    const SALT: &'static [u8] = b"NaCl";
+    const KNOWN_ANSWER: GenericArray<u8, Self::OutputLen> = GenericArray::from_array([
+        0x98, 0x13, 0x74, 0xb7, 0x0a, 0x02, 0x9a, 0x5b, 0x8a, 0xe0, 0x36, 0x28, 0x62, 0x84, 0x9f,
+        0xed, 0x87, 0xd7, 0x3e, 0x29, 0xf6, 0x08, 0x99, 0xda, 0x4f, 0xc5, 0x37, 0xa3, 0xc0, 0x6b,
+        0x36, 0x81, 0x04, 0x4a, 0xbf, 0x68, 0x0c, 0x6f, 0x40, 0x68, 0xf0, 0x4f, 0x5f, 0xa2, 0x8c,
+        0x8a, 0x16, 0x32, 0x26, 0x5b, 0xdc, 0x82, 0xa6, 0xa8, 0x06, 0xce, 0x08, 0x9a, 0x62, 0x18,
+        0xca, 0x02, 0x93, 0xb2,
     ]);
 }
 
@@ -162,7 +201,7 @@ pub trait CaseP1 {
                 Self::PASSWORD,
                 Self::SALT,
                 Self::CF::U8.try_into().unwrap(),
-                Self::R::U32,
+                Self::R::U32.try_into().unwrap(),
                 1,
                 output0.as_mut_slice(),
             );
@@ -192,9 +231,9 @@ pub trait CaseP1 {
         buffer_set0.set_input(&hmac_state, Self::SALT);
         buffer_set1.set_input(&hmac_state_dummy, Self::SALT);
 
-        buffer_set0.pipeline_start();
-        buffer_set0.scrypt_ro_mix_interleaved(&mut buffer_set1);
-        buffer_set1.pipeline_drain();
+        buffer_set0.ro_mix_front();
+        buffer_set0.ro_mix_interleaved(&mut buffer_set1);
+        buffer_set1.ro_mix_back();
 
         buffer_set0.extract_output(&hmac_state, &mut output0);
         buffer_set1.extract_output(&hmac_state_dummy, &mut output1);
@@ -319,7 +358,7 @@ pub trait CaseP1 {
 #[cfg(feature = "alloc")]
 pub trait Case {
     /// The parallel width
-    type P: ArrayLength + PowerOfTwo + NonZero + IsGreaterOrEqual<U2, Output = B1>;
+    type P: ArrayLength + NonZero + IsGreaterOrEqual<U2, Output = B1>;
     /// The length of the output
     type OutputLen: ArrayLength + NonZero;
     /// The number of blocks
@@ -344,10 +383,7 @@ pub trait Case {
         let mut buffer0 = BufferSet::<_, Self::R>::new_boxed(Self::CF::U8.try_into().unwrap());
         let mut buffer1 = BufferSet::<_, Self::R>::new_boxed(Self::CF::U8.try_into().unwrap());
 
-        hmac_state.emit_scatter(
-            Self::SALT,
-            input_buffers.iter_mut().map(|b| b.transmute_as_u8_mut()),
-        );
+        hmac_state.emit_scatter(Self::SALT, input_buffers.iter_mut());
 
         buffer0.pipeline(
             &mut buffer1,
@@ -364,7 +400,7 @@ pub trait Case {
                 Self::PASSWORD,
                 Self::SALT,
                 Self::CF::U8.try_into().unwrap(),
-                Self::R::U32,
+                Self::R::U32.try_into().unwrap(),
                 Self::P::U32,
                 output.as_mut_slice(),
             );
@@ -372,10 +408,7 @@ pub trait Case {
             output.fill(0);
         }
 
-        hmac_state.emit_gather(
-            output_buffers.iter().map(|b| b.transmute_as_u8()),
-            &mut output,
-        );
+        hmac_state.emit_gather(output_buffers.iter(), &mut output);
 
         assert_eq!(output, Self::KNOWN_ANSWER);
     }
@@ -387,29 +420,47 @@ mod tests {
 
     #[test]
     fn test_cast_16_1_1_algorithm_self_test() {
-        CastN16R1P1::algorithm_self_test();
+        CaseN16R1P1::algorithm_self_test();
     }
 
     #[test]
     fn test_cast_16_1_1_pipeline_api_test() {
-        CastN16R1P1::pipeline_api_test();
+        CaseN16R1P1::pipeline_api_test();
     }
 
     #[cfg(feature = "alloc")]
     #[test]
     fn test_cast_16384_8_1_algorithm_self_test() {
-        CastN16384R8P1::algorithm_self_test();
+        CaseN16384R8P1::algorithm_self_test();
     }
 
     #[cfg(feature = "alloc")]
     #[test]
     fn test_cast_1024_8_16_algorithm_self_test() {
-        CastN1024R8P16::algorithm_self_test();
+        CaseN1024R8P16::algorithm_self_test();
     }
 
     #[cfg(feature = "alloc")]
     #[test]
     fn test_cast_1024_1_2_algorithm_self_test() {
-        CastN1024R1P2::algorithm_self_test();
+        CaseN1024R1P2::algorithm_self_test();
+    }
+
+    #[cfg(feature = "alloc")]
+    #[test]
+    fn test_case_1024_53_1_algorithm_self_test() {
+        CaseN1024R53P1::algorithm_self_test();
+    }
+
+    #[cfg(feature = "alloc")]
+    #[test]
+    fn test_case_1024_53_1_pipeline_api_test() {
+        CaseN1024R53P1::pipeline_api_test();
+    }
+
+    #[cfg(feature = "alloc")]
+    #[test]
+    fn test_case_1024_53_3_algorithm_self_test() {
+        CaseN1024R53P3::algorithm_self_test();
     }
 }

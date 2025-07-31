@@ -12,12 +12,13 @@ use generic_array::{
     },
 };
 use scrypt_opt::{
-    BufferSet,
+    fixed_r::BufferSet,
     memory::Align64,
     pbkdf2_1::Pbkdf2HmacSha256State,
     pipeline::PipelineContext,
     self_test::{
-        Case, CaseP1, CastN16R1P1, CastN1024R1P2, CastN1024R8P16, CastN16384R8P1, CastN1048576R8P1,
+        Case, CaseN16R1P1, CaseN1024R1P2, CaseN1024R8P16, CaseN1024R53P1, CaseN1024R53P3,
+        CaseN16384R8P1, CaseN1048576R8P1, CaseP1,
     },
 };
 
@@ -114,12 +115,19 @@ enum Command {
         r: usize,
         #[arg(long, default_value = "8", help = "length of nonce in bytes")]
         nonce_len: usize,
-        #[arg(long, default_value = "16", help = "length of output in bytes")]
-        output_len: usize,
+        #[arg(
+            long,
+            help = "length of output in bytes (default: offset rounded up to 8 bytes)"
+        )]
+        output_len: Option<usize>,
         #[arg(long, default_value = "U29kaXVtQ2xvcmlkZQ==")] // "SodiumChloride"
         salt: String,
-        #[arg(long, help = "interpret hash output as little endian")]
-        little_endian: bool,
+        #[arg(
+            long,
+            default_value = "0",
+            help = "offset in nibbles for the target hash"
+        )]
+        offset: usize,
         #[arg(long, help = "target hash in hex")]
         target: String,
         #[arg(
@@ -272,7 +280,8 @@ fn pow<R: ArrayLength + NonZero + Send + Sync>(
     mask: NonZeroU64,
     target: u64,
     num_threads: NonZeroU32,
-    output: Box<[u8]>,
+    offset: usize,
+    output_len: usize,
     nonce_len: usize,
     #[cfg(feature = "core_affinity")] core_stride: NonZeroUsize,
 ) -> Option<PowResult> {
@@ -284,27 +293,25 @@ fn pow<R: ArrayLength + NonZero + Send + Sync>(
 
     const NOT_A_SOLUTION: u64 = u64::MAX;
 
-    let required_blocks =
-        scrypt_opt::BufferSet::<&mut [Align64<scrypt_opt::Block<R>>], R>::minimum_blocks(cf);
+    let required_blocks = scrypt_opt::fixed_r::minimum_blocks(cf);
 
     let search_max = if nonce_len == 8 {
         u64::MAX - 1
     } else {
         (1 << (nonce_len * 8)) - 1
     };
-    let output_len = output.len();
 
     struct State<R: ArrayLength + NonZero + Send + Sync> {
         salt: Box<[u8]>,
         mask: NonZeroU64,
         target: u64,
-        offset: isize,
+        offset: usize,
         stop_signal: AtomicBool,
         retired_count: AtomicU64,
         solved_mutex: Mutex<(Box<[u8]>, u64)>,
         _marker: PhantomData<R>,
     }
-    let mut full_slice = MultiThreadedHugeSlice::<Align64<scrypt_opt::Block<R>>>::new(
+    let mut full_slice = MultiThreadedHugeSlice::<Align64<scrypt_opt::fixed_r::Block<R>>>::new(
         required_blocks * 2,
         num_threads,
     );
@@ -312,10 +319,10 @@ fn pow<R: ArrayLength + NonZero + Send + Sync>(
         salt,
         mask,
         target,
-        offset: output_len as isize - 8,
+        offset,
         stop_signal: AtomicBool::new(false),
         retired_count: AtomicU64::new(0),
-        solved_mutex: Mutex::new((output, NOT_A_SOLUTION)),
+        solved_mutex: Mutex::new((vec![0u8; output_len].into_boxed_slice(), NOT_A_SOLUTION)),
         _marker: PhantomData,
     };
 
@@ -333,156 +340,129 @@ fn pow<R: ArrayLength + NonZero + Send + Sync>(
             std::thread::Builder::new()
                 .name(format!("pow-worker-{}", thread_idx))
                 .spawn_scoped(s, move || {
-                #[cfg(feature = "core_affinity")]
-                if let Some(core) = core {
-                    if !core_affinity::set_for_current(core) {
-                        eprintln!("Failed to set core affinity for thread {}", thread_idx);
+                    #[cfg(feature = "core_affinity")]
+                    if let Some(core) = core {
+                        if !core_affinity::set_for_current(core) {
+                            eprintln!("Failed to set core affinity for thread {}", thread_idx);
+                        }
+                    } else {
+                        eprintln!("No core affinity available for thread {}", thread_idx);
                     }
-                } else {
-                    eprintln!("No core affinity available for thread {}", thread_idx);
-                }
 
-                // pad front and back 8 bytes to ensure all possible reads are aligned
-                // the lowest possible output length is 0, which gives an offset of -8, which needs to be in bounds
-                let alloc_len = 8 + output_len + 8;
-                let mut local_output = vec![0u8; alloc_len].into_boxed_slice();
-                let alloc_start = local_output.as_ptr();
-                let alignment_offset = unsafe {
-                    local_output
-                        .as_mut_ptr()
-                        .offset(state.offset)
-                        .align_offset(8)
-                };
-                assert!(
-                    unsafe { local_output.as_ptr().offset(state.offset) >= alloc_start },
-                    "sanity check failed: local_output.as_ptr().offset(state.offset) >= alloc_start"
-                );
-                assert!(
-                    unsafe {
-                        local_output.as_ptr().offset(state.offset).add(8)
-                            < alloc_start.add(alloc_len)
-                    },
-                    "sanity check failed: local_output.as_ptr().offset(state.offset).add(8) < alloc_start.add(alloc_len)"
-                );
-                // slice out the middle portion for operations
-                let local_output = &mut local_output[8 + alignment_offset..][..output_len];
+                    // pad front and back 8 bytes to ensure all possible reads are aligned
+                    // the lowest possible output length is 0, which gives an offset of -8, which needs to be in bounds
+                    let mut local_output = vec![0u8; output_len].into_boxed_slice();
 
-                let (buffer0_inner, buffer1_inner) = local_buffer.as_mut().split_at_mut(required_blocks);
+                    let (buffer0_inner, buffer1_inner) =
+                        local_buffer.as_mut().split_at_mut(required_blocks);
 
-                let mut buffers0 =
-                    scrypt_opt::BufferSet::<&mut [Align64<scrypt_opt::Block<R>>], R>::new(
-                        buffer0_inner,
-                    );
-
-                let mut buffers1 =
-                    scrypt_opt::BufferSet::<&mut [Align64<scrypt_opt::Block<R>>], R>::new(
-                        buffer1_inner,
-                    );
-
-                struct NonceState<R: ArrayLength + NonZero + Send + Sync> {
-                    nonce: u64,
-                    hmac_state: Pbkdf2HmacSha256State,
-                    _marker: PhantomData<R>,
-                }
-
-                impl<'a, 'b, R: ArrayLength + NonZero + Send + Sync>
-                    PipelineContext<
-                        (&'a State<R>, &'b mut [u8]),
-                        &mut [Align64<scrypt_opt::Block<R>>],
+                    let mut buffers0 = scrypt_opt::fixed_r::BufferSet::<
+                        &mut [Align64<scrypt_opt::fixed_r::Block<R>>],
                         R,
-                        u64,
-                    > for NonceState<R>
-                {
-                    #[inline(always)]
-                    fn begin(
-                        &mut self,
-                        (pipeline_state, _local_output): &mut (&'a State<R>, &'b mut [u8]),
-                        buffer_set: &mut BufferSet<&mut [Align64<scrypt_opt::Block<R>>], R>,
-                    ) {
-                        buffer_set.set_input(&self.hmac_state, &pipeline_state.salt);
+                    >::new(buffer0_inner);
+
+                    let mut buffers1 = scrypt_opt::fixed_r::BufferSet::<
+                        &mut [Align64<scrypt_opt::fixed_r::Block<R>>],
+                        R,
+                    >::new(buffer1_inner);
+
+                    struct NonceState<R: ArrayLength + NonZero + Send + Sync> {
+                        nonce: u64,
+                        hmac_state: Pbkdf2HmacSha256State,
+                        _marker: PhantomData<R>,
                     }
 
-                    #[inline(always)]
-                    fn drain(
-                        self,
-                        (pipeline_state, local_output): &mut (&'a State<R>, &'b mut [u8]),
-                        buffer_set: &mut scrypt_opt::BufferSet<
-                            &mut [Align64<scrypt_opt::Block<R>>],
+                    impl<'a, 'b, R: ArrayLength + NonZero + Send + Sync>
+                        PipelineContext<
+                            (&'a State<R>, &'b mut [u8]),
+                            &mut [Align64<scrypt_opt::fixed_r::Block<R>>],
                             R,
-                        >,
-                    ) -> Option<u64> {
-                        buffer_set.extract_output(&self.hmac_state, local_output);
-
-                        pipeline_state
-                            .retired_count
-                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-
-                        // SAFETY: purposefully reading out of bounds, allocated 8 bytes extra for target
-                        //
-                        // pointer is manually aligned to 8 bytes at the start of the function
-                        let mut t = unsafe {
-                            local_output
-                                .as_ptr()
-                                .offset(pipeline_state.offset)
-                                .cast::<u64>()
-                                .read()
-                        };
-
-                        #[cfg(target_endian = "little")]
-                        {
-                            t = t.swap_bytes();
+                            u64,
+                        > for NonceState<R>
+                    {
+                        #[inline(always)]
+                        fn begin(
+                            &mut self,
+                            (pipeline_state, _): &mut (&'a State<R>, &'b mut [u8]),
+                            buffer_set: &mut BufferSet<
+                                &mut [Align64<scrypt_opt::fixed_r::Block<R>>],
+                                R,
+                            >,
+                        ) {
+                            buffer_set.set_input(&self.hmac_state, &pipeline_state.salt);
                         }
 
-                        t &= pipeline_state.mask.get();
+                        #[inline(always)]
+                        fn drain(
+                            self,
+                            (pipeline_state, local_output): &mut (&'a State<R>, &'b mut [u8]),
+                            buffer_set: &mut scrypt_opt::fixed_r::BufferSet<
+                                &mut [Align64<scrypt_opt::fixed_r::Block<R>>],
+                                R,
+                            >,
+                        ) -> Option<u64> {
+                            let mut output = [0u8; 8];
+                            self.hmac_state.partial_gather(
+                                [buffer_set.raw_salt_output()],
+                                pipeline_state.offset,
+                                &mut output,
+                            );
 
-                        let succeeded = t <= pipeline_state.target;
-                        if succeeded {
-                            return Some(self.nonce);
-                        }
+                            let t = u64::from_be_bytes(output) & pipeline_state.mask.get();
 
-                        None
-                    }
-                }
+                            pipeline_state
+                                .retired_count
+                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
-                let result = buffers0.pipeline(
-                    &mut buffers1,
-                    ((thread_idx as u64)..=search_max)
-                        .step_by(num_threads.get() as usize)
-                        .map_while(|i| {
-                            if state.stop_signal.load(std::sync::atomic::Ordering::Relaxed) {
-                                return None;
+                            let succeeded = t <= pipeline_state.target;
+                            if succeeded {
+                                buffer_set.extract_output(&self.hmac_state, local_output);
+                                return Some(self.nonce);
                             }
 
-                            Some(NonceState::<R> {
-                                nonce: i,
-                                // SAFETY: i.to_le_bytes() is way less than 1 SHA-256 block, so we can safely unwrap without checking
-                                hmac_state: unsafe {
-                                    // we do not need to [..nonce_len] because HMAC(short_key) = HMAC(short_key || 0)
-                                    Pbkdf2HmacSha256State::new_short(&i.to_le_bytes())
-                                        .unwrap_unchecked()
-                                },
-                                _marker: PhantomData,
-                            })
-                        }),
-                    &mut (&state, local_output),
-                );
-
-                if let Some(nonce) = result {
-                    // if the solution is real we definitely can stop the search
-                    // so signal ASAP
-                    state
-                        .stop_signal
-                        .store(true, std::sync::atomic::Ordering::Release);
-
-                    // synchronize and pick our answer if no one else has gotten to this point yet
-                    let mut solution = state.solved_mutex.lock().unwrap();
-                    if solution.1 == NOT_A_SOLUTION {
-                        solution.0.copy_from_slice(&local_output);
-                        solution.1 = nonce;
+                            None
+                        }
                     }
-                }
-            })
-            .expect("failed to spawn thread");
+
+                    let result = buffers0.pipeline(
+                        &mut buffers1,
+                        ((thread_idx as u64)..=search_max)
+                            .step_by(num_threads.get() as usize)
+                            .map_while(|i| {
+                                if state.stop_signal.load(std::sync::atomic::Ordering::Relaxed) {
+                                    return None;
+                                }
+
+                                Some(NonceState::<R> {
+                                    nonce: i,
+                                    // SAFETY: i.to_le_bytes() is way less than 1 SHA-256 block, so we can safely unwrap without checking
+                                    hmac_state: unsafe {
+                                        // we do not need to [..nonce_len] because HMAC(short_key) = HMAC(short_key || 0)
+                                        Pbkdf2HmacSha256State::new_short(&i.to_le_bytes())
+                                            .unwrap_unchecked()
+                                    },
+                                    _marker: PhantomData,
+                                })
+                            }),
+                        &mut (&state, &mut local_output),
+                    );
+
+                    if let Some(nonce) = result {
+                        // if the solution is real we definitely can stop the search
+                        // so signal ASAP
+                        state
+                            .stop_signal
+                            .store(true, std::sync::atomic::Ordering::Release);
+
+                        // synchronize and pick our answer if no one else has gotten to this point yet
+                        let mut solution = state.solved_mutex.lock().unwrap();
+                        if solution.1 == NOT_A_SOLUTION {
+                            solution.0.copy_from_slice(&local_output);
+                            solution.1 = nonce;
+                        }
+                    }
+                })
+                .expect("failed to spawn thread");
         }
     });
 
@@ -512,17 +492,22 @@ fn cast(fast: bool) {
         }};
     }
 
-    case!("16/1/1", { CastN16R1P1::algorithm_self_test() });
-    case!("16/1/1 (pipeline)", { CastN16R1P1::pipeline_api_test() });
-    case!("1024/1/2", { CastN1024R1P2::algorithm_self_test() });
-    case!("1024/8/16", { CastN1024R8P16::algorithm_self_test() });
+    case!("16/1/1", { CaseN16R1P1::algorithm_self_test() });
+    case!("16/1/1 (pipeline)", { CaseN16R1P1::pipeline_api_test() });
+    case!("1024/1/2", { CaseN1024R1P2::algorithm_self_test() });
+    case!("1024/8/16", { CaseN1024R8P16::algorithm_self_test() });
+    case!("1024/53/1", { CaseN1024R53P1::algorithm_self_test() });
+    case!("1024/53/1 (pipeline)", {
+        CaseN1024R53P1::pipeline_api_test()
+    });
+    case!("1024/53/3", { CaseN1024R53P3::algorithm_self_test() });
 
     if !fast {
-        case!("16384/8/1", { CastN16384R8P1::algorithm_self_test() });
+        case!("16384/8/1", { CaseN16384R8P1::algorithm_self_test() });
         case!("16384/8/1 (pipeline)", {
-            CastN16384R8P1::pipeline_api_test()
+            CaseN16384R8P1::pipeline_api_test()
         });
-        case!("1048576/8/1", { CastN1048576R8P1::algorithm_self_test() });
+        case!("1048576/8/1", { CaseN1048576R8P1::algorithm_self_test() });
     }
 
     println!("------ PASSED ALL TESTS ------");
@@ -535,10 +520,9 @@ fn throughput<Pipeline: Bit, R: ArrayLength + NonZero>(
 ) {
     let counter = AtomicU64::new(0);
 
-    let required_blocks =
-        scrypt_opt::BufferSet::<&mut [Align64<scrypt_opt::Block<R>>], R>::minimum_blocks(cf);
+    let required_blocks = scrypt_opt::fixed_r::minimum_blocks(cf);
 
-    let mut full_slice = MultiThreadedHugeSlice::<Align64<scrypt_opt::Block<R>>>::new(
+    let mut full_slice = MultiThreadedHugeSlice::<Align64<scrypt_opt::fixed_r::Block<R>>>::new(
         if Pipeline::BOOL {
             required_blocks * 2
         } else {
@@ -570,8 +554,8 @@ fn throughput<Pipeline: Bit, R: ArrayLength + NonZero>(
                     let (buffer0_inner, buffer1_inner) =
                         local_buffer.as_mut().split_at_mut(required_blocks);
 
-                    let mut buffers0 = scrypt_opt::BufferSet::<
-                        &mut [Align64<scrypt_opt::Block<R>>],
+                    let mut buffers0 = scrypt_opt::fixed_r::BufferSet::<
+                        &mut [Align64<scrypt_opt::fixed_r::Block<R>>],
                         R,
                     >::new(buffer0_inner);
 
@@ -590,8 +574,8 @@ fn throughput<Pipeline: Bit, R: ArrayLength + NonZero>(
                         return;
                     }
 
-                    let mut buffers1 = scrypt_opt::BufferSet::<
-                        &mut [Align64<scrypt_opt::Block<R>>],
+                    let mut buffers1 = scrypt_opt::fixed_r::BufferSet::<
+                        &mut [Align64<scrypt_opt::fixed_r::Block<R>>],
                         R,
                     >::new(buffer1_inner);
 
@@ -614,15 +598,19 @@ fn throughput<Pipeline: Bit, R: ArrayLength + NonZero>(
                     }
 
                     impl<R: ArrayLength + NonZero>
-                        PipelineContext<&AtomicU64, &mut [Align64<scrypt_opt::Block<R>>], R, ()>
-                        for Context
+                        PipelineContext<
+                            &AtomicU64,
+                            &mut [Align64<scrypt_opt::fixed_r::Block<R>>],
+                            R,
+                            (),
+                        > for Context
                     {
                         #[inline(always)]
                         fn begin(
                             &mut self,
                             _state: &mut &AtomicU64,
-                            buffer_set: &mut scrypt_opt::BufferSet<
-                                &mut [Align64<scrypt_opt::Block<R>>],
+                            buffer_set: &mut scrypt_opt::fixed_r::BufferSet<
+                                &mut [Align64<scrypt_opt::fixed_r::Block<R>>],
                                 R,
                             >,
                         ) {
@@ -633,8 +621,8 @@ fn throughput<Pipeline: Bit, R: ArrayLength + NonZero>(
                         fn drain(
                             self,
                             counter: &mut &AtomicU64,
-                            buffer_set: &mut scrypt_opt::BufferSet<
-                                &mut [Align64<scrypt_opt::Block<R>>],
+                            buffer_set: &mut scrypt_opt::fixed_r::BufferSet<
+                                &mut [Align64<scrypt_opt::fixed_r::Block<R>>],
                                 R,
                             >,
                         ) -> Option<()> {
@@ -722,12 +710,26 @@ fn main() {
             let (key, salt) = (key.unwrap(), salt.unwrap());
 
             let mut output = vec![0; output_len].into_boxed_slice();
-            scrypt_opt::compat::scrypt(&key, &salt, cf, r, p, &mut output);
+            scrypt_opt::compat::scrypt(
+                &key,
+                &salt,
+                cf,
+                r.try_into().expect("invalid r value"),
+                p,
+                &mut output,
+            );
 
             if output_raw {
                 stdout.write_all(&output).unwrap();
             } else {
-                let encoder = base64::engine::general_purpose::STANDARD;
+                let encoder = base64::engine::general_purpose::STANDARD_NO_PAD;
+                write!(stdout, "$scrypt$ln={cf}$r={r}$p={p}$").unwrap();
+
+                {
+                    let mut write = EncoderWriter::new(&mut stdout, &encoder);
+                    write.write_all(&salt).unwrap();
+                }
+                stdout.write_all(b"$").unwrap();
                 let mut write = EncoderWriter::new(&mut stdout, &encoder);
                 write.write_all(&output).unwrap();
                 write.finish().unwrap().write_all(b"\n").unwrap();
@@ -758,9 +760,9 @@ fn main() {
             nonce_len,
             output_len,
             salt,
+            offset,
             target,
             mask,
-            little_endian,
             quiet,
         } => {
             assert!(target.len() <= 16, "target must be less than 8 bytes");
@@ -781,12 +783,6 @@ fn main() {
                 target_mask <<= 4;
                 target_mask |= 15;
             }
-
-            if little_endian {
-                target_u64 = target_u64.swap_bytes();
-                target_mask = target_mask.swap_bytes();
-            }
-
             if let Some(mask) = mask {
                 target_mask = 0;
                 for nibble in mask.as_bytes().iter() {
@@ -800,6 +796,14 @@ fn main() {
                     target_mask |= addend;
                 }
             }
+
+            target_u64 <<= (16 - target.len()) * 4;
+            target_mask <<= (16 - target.len()) * 4;
+
+            let byte_offset = offset / 2;
+
+            let output_len = output_len
+                .unwrap_or_else(|| byte_offset.checked_next_multiple_of(8).unwrap_or(8).max(8));
 
             assert_eq!(
                 target_u64 & target_mask,
@@ -819,8 +823,6 @@ fn main() {
                 .or_else(|_| GeneralPurpose::new(&base64::alphabet::STANDARD, config).decode(salt))
                 .expect("invalid salt, should be base64 encoded");
 
-            let output = vec![0; output_len].into_boxed_slice();
-
             let estimated_cs = target_mask.get().div_ceil(target_u64 + 1) / 2;
             if !quiet {
                 eprintln!(
@@ -836,7 +838,8 @@ fn main() {
                     target_mask,
                     target_u64,
                     num_threads,
-                    output,
+                    byte_offset,
+                    output_len,
                     nonce_len,
                     #[cfg(feature = "core_affinity")]
                     core_stride,
