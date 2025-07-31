@@ -71,7 +71,11 @@ Each hash is pipelined into 4 steps:
 2. For each of the $P$ chunks: Run $RoMix_{Front}$ then $RoMix_{Back}$.
 3. "Gather" all the blocks into a single HMAC-SHA-256 output.
 
-These APIs facilitate these:
+The [`RoMix`] trait is the main entry point for the kernel. The [`RoMix::ro_mix_front`], [`RoMix::ro_mix_back`] and [`RoMix::ro_mix_interleaved`] methods perform the $RoMix_{Front}$, $RoMix_{Back}$ and concurrent $RoMix_{Front}$ and $RoMix_{Back}$ operations respectively.
+
+The [`compat`] module provides a C, WASM and Rust APIs that are push-button compatible with off the shelf libraries.
+
+The [`fixed_r`] module allows you to compile an optimized kernel for a specific $R$ value, with more rich APIs available:
 
 - `Block<R>` represents a salsa20 (512-bit) block in u8 form.
 - `BufferSet::new`, `BufferSet::new_boxed`,  `BufferSet::new_maybe_huge_slice` create a new buffer set using an existing buffer or a new heap or huge page backed buffer. `BufferSet::minimum_blocks` returns the minimum number of blocks required to be allocated for a given Cost Factor (log2(N)).
