@@ -1,4 +1,7 @@
-use crate::{Align64, Block, BufferSet};
+use crate::{
+    Align64,
+    fixed_r::{Block, BufferSet},
+};
 use generic_array::{ArrayLength, typenum::NonZero};
 
 /// A context for a pipeline computation.

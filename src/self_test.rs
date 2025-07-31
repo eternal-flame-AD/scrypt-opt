@@ -8,7 +8,9 @@ use generic_array::{
 };
 
 use crate::{
-    Align64, Block, BufferSet, ValidCostFactor, pbkdf2_1::Pbkdf2HmacSha256State,
+    Align64, ValidCostFactor,
+    fixed_r::{Block, BufferSet},
+    pbkdf2_1::Pbkdf2HmacSha256State,
     pipeline::PipelineContext,
 };
 
@@ -195,16 +197,14 @@ pub trait CaseP1 {
         // compat API test
         #[cfg(feature = "std")]
         {
-            if !crate::compat::scrypt(
+            crate::compat::scrypt(
                 Self::PASSWORD,
                 Self::SALT,
                 Self::CF::U8.try_into().unwrap(),
-                Self::R::U32,
+                Self::R::U32.try_into().unwrap(),
                 1,
                 output0.as_mut_slice(),
-            ) {
-                panic!("invalid/unsupported r value");
-            }
+            );
             assert_eq!(output0, Self::KNOWN_ANSWER);
             output0.fill(0);
         }
@@ -396,16 +396,14 @@ pub trait Case {
         // compat API test
         #[cfg(feature = "std")]
         {
-            if !crate::compat::scrypt(
+            crate::compat::scrypt(
                 Self::PASSWORD,
                 Self::SALT,
                 Self::CF::U8.try_into().unwrap(),
-                Self::R::U32,
+                Self::R::U32.try_into().unwrap(),
                 Self::P::U32,
                 output.as_mut_slice(),
-            ) {
-                panic!("invalid/unsupported r value");
-            }
+            );
             assert_eq!(output, Self::KNOWN_ANSWER);
             output.fill(0);
         }

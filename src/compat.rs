@@ -1,16 +1,11 @@
 use core::num::{NonZeroU8, NonZeroU32};
 
-use generic_array::{
-    ArrayLength,
-    typenum::{NonZero, U1, U2, U3, U4, U5, U6, U7, U8, U9, U10, U11, U12, U13, U14, U15, U16},
-};
-
 use hmac::{Hmac, Mac, digest::FixedOutput};
 use sha2::Sha256;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
-use crate::{Align64, Block, BufferSet, RoMix, pbkdf2_1::Pbkdf2HmacSha256State};
+use crate::{Align64, RoMix};
 
 /// API constants for unsupported parameters.
 pub const SCRYPT_OPT_UNSUPPORTED_PARAM_SPACE: core::ffi::c_int = -1;
@@ -21,46 +16,8 @@ pub const SCRYPT_OPT_INVALID_BUFFER_SIZE: core::ffi::c_int = -2;
 /// API constants for invalid buffer alignments.
 pub const SCRYPT_OPT_INVALID_BUFFER_ALIGNMENT: core::ffi::c_int = -3;
 
-#[inline(never)]
-fn scrypt_impl<R: ArrayLength + NonZero>(
-    password: &[u8],
-    salt: &[u8],
-    log2_n: NonZeroU8,
-    p: u32,
-    output: &mut [u8],
-) {
-    if p == 0 {
-        return;
-    }
-
-    let hmac_state = Pbkdf2HmacSha256State::new(password);
-    let mut input_buffers: Vec<Align64<Block<R>>> = vec![Default::default(); p as usize];
-    let mut output_buffers: Vec<Align64<Block<R>>> = vec![Default::default(); p as usize];
-
-    let mut buffer0 = BufferSet::<_, R>::new_boxed(log2_n);
-
-    if p == 1 {
-        buffer0.set_input(&hmac_state, salt);
-        buffer0.scrypt_ro_mix();
-        buffer0.extract_output(&hmac_state, output);
-        return;
-    }
-
-    let mut buffer1 = BufferSet::<_, R>::new_boxed(log2_n);
-
-    hmac_state.emit_scatter(salt, input_buffers.iter_mut());
-
-    buffer0.pipeline(
-        &mut buffer1,
-        input_buffers.iter().zip(output_buffers.iter_mut()),
-        &mut (),
-    );
-
-    hmac_state.emit_gather(output_buffers.iter(), output);
-}
-
-#[inline(never)]
-fn scrypt_dyn_impl(
+/// Run scrypt with the given parameters and store the result in the output buffer.
+pub fn scrypt(
     password: &[u8],
     salt: &[u8],
     log2_n: NonZeroU8,
@@ -68,24 +25,25 @@ fn scrypt_dyn_impl(
     p: u32,
     output: &mut [u8],
 ) {
-    let mut buffers0 = vec![Align64([0u8; 64]); 2 * r.get() as usize * (1 << log2_n.get() + 2)];
+    let mut buffers0 = vec![Align64([0u8; 64]); 2 * r.get() as usize * ((1 << log2_n.get()) + 2)];
     let mut hmac_state = Hmac::<Sha256>::new_from_slice(password).unwrap();
+    let mut output_hmac_state = hmac_state.clone();
+    hmac_state.update(salt);
     buffers0
         .ro_mix_input_buffer(r)
         .chunks_exact_mut(32)
         .enumerate()
         .for_each(|(i, chunk)| {
             let mut this_hmac = hmac_state.clone();
-            this_hmac.update(salt);
             this_hmac.update(&(i as u32 + 1).to_be_bytes());
             this_hmac.finalize_into(chunk.try_into().unwrap());
         });
     buffers0.ro_mix_front(r, log2_n);
 
     if p == 1 {
-        hmac_state.update(buffers0.ro_mix_back(r, log2_n));
+        output_hmac_state.update(buffers0.ro_mix_back(r, log2_n));
         output.chunks_mut(32).enumerate().for_each(|(i, chunk)| {
-            let mut this_hmac = hmac_state.clone();
+            let mut this_hmac = output_hmac_state.clone();
             this_hmac.update(&(i as u32 + 1).to_be_bytes());
             let output = this_hmac.finalize();
             chunk.copy_from_slice(&output.into_bytes()[..chunk.len()]);
@@ -94,9 +52,6 @@ fn scrypt_dyn_impl(
     }
 
     let mut buffers1 = vec![Align64([0u8; 64]); 2 * r.get() as usize * ((1 << log2_n.get()) + 2)];
-
-    let mut output_hmac_state = hmac_state.clone();
-    hmac_state.update(salt);
 
     for chunk_idx in 1..p {
         buffers1
@@ -122,40 +77,6 @@ fn scrypt_dyn_impl(
     });
 }
 
-/// Run scrypt with the given parameters and store the result in the output buffer.
-#[inline(always)]
-#[must_use]
-pub fn scrypt(
-    password: &[u8],
-    salt: &[u8],
-    log2_n: NonZeroU8,
-    r: u32,
-    p: u32,
-    output: &mut [u8],
-) -> bool {
-    match r {
-        0 => return false,
-        1 => scrypt_impl::<U1>(password, salt, log2_n, p, output),
-        2 => scrypt_impl::<U2>(password, salt, log2_n, p, output),
-        3 => scrypt_impl::<U3>(password, salt, log2_n, p, output),
-        4 => scrypt_impl::<U4>(password, salt, log2_n, p, output),
-        5 => scrypt_impl::<U5>(password, salt, log2_n, p, output),
-        6 => scrypt_impl::<U6>(password, salt, log2_n, p, output),
-        7 => scrypt_impl::<U7>(password, salt, log2_n, p, output),
-        8 => scrypt_impl::<U8>(password, salt, log2_n, p, output),
-        9 => scrypt_impl::<U9>(password, salt, log2_n, p, output),
-        10 => scrypt_impl::<U10>(password, salt, log2_n, p, output),
-        11 => scrypt_impl::<U11>(password, salt, log2_n, p, output),
-        12 => scrypt_impl::<U12>(password, salt, log2_n, p, output),
-        13 => scrypt_impl::<U13>(password, salt, log2_n, p, output),
-        14 => scrypt_impl::<U14>(password, salt, log2_n, p, output),
-        15 => scrypt_impl::<U15>(password, salt, log2_n, p, output),
-        16 => scrypt_impl::<U16>(password, salt, log2_n, p, output),
-        _ => scrypt_dyn_impl(password, salt, log2_n, r.try_into().unwrap(), p, output),
-    }
-    true
-}
-
 #[unsafe(export_name = "scrypt_kdf_cf")]
 /// C export for scrypt_kdf using a libscrypt-kdf compatible API except input is taken as a cost factor.
 pub unsafe extern "C" fn scrypt_c_cf(
@@ -172,16 +93,17 @@ pub unsafe extern "C" fn scrypt_c_cf(
     let password = unsafe { core::slice::from_raw_parts(password, password_len) };
     let salt = unsafe { core::slice::from_raw_parts(salt, salt_len) };
     let output = unsafe { core::slice::from_raw_parts_mut(output, output_len) };
-    if !scrypt(
+    let Some(r) = NonZeroU32::new(r) else {
+        return SCRYPT_OPT_UNSUPPORTED_PARAM_SPACE;
+    };
+    scrypt(
         password,
         salt,
         NonZeroU8::new(log2_n).unwrap(),
         r,
         p,
         output,
-    ) {
-        return -1;
-    }
+    );
     0
 }
 
@@ -208,9 +130,10 @@ pub unsafe extern "C" fn scrypt_c(
     let password = unsafe { core::slice::from_raw_parts(password, password_len) };
     let salt = unsafe { core::slice::from_raw_parts(salt, salt_len) };
     let output = unsafe { core::slice::from_raw_parts_mut(output, output_len) };
-    if !scrypt(password, salt, log2_n, r, p, output) {
+    let Some(r) = NonZeroU32::new(r) else {
         return SCRYPT_OPT_UNSUPPORTED_PARAM_SPACE;
-    }
+    };
+    scrypt(password, salt, log2_n, r, p, output);
     0
 }
 
@@ -249,11 +172,7 @@ unsafe extern "C" fn scrypt_ro_mix_minimum_buffer_len(
         return 0;
     };
 
-    match_r!(r, R, {
-        let num_blocks = crate::minimum_blocks(cf);
-        num_blocks * core::mem::size_of::<Align64<Block<R>>>() as usize
-    })
-    .unwrap_or(0)
+    128 * r as usize * ((1 << cf.get()) + 2)
 }
 
 /// C export for scrypt_ro_mix.
@@ -405,7 +324,12 @@ pub fn scrypt_wasm(password: &[u8], salt: &[u8], n: u32, r: u32, p: u32, dklen: 
 
 #[cfg(test)]
 mod tests {
-    use generic_array::typenum::U32;
+    use generic_array::{
+        ArrayLength,
+        typenum::{NonZero, U1, U2, U8, U16, U32},
+    };
+
+    use crate::pbkdf2_1::Pbkdf2HmacSha256State;
 
     use super::*;
 
@@ -416,16 +340,14 @@ mod tests {
                 for cf in 1..=7 {
                     let mut output = [0; 64];
                     let mut expected = [0; 64];
-                    if !scrypt(
+                    scrypt(
                         b"password",
                         b"salt",
                         cf.try_into().unwrap(),
-                        r,
+                        r.try_into().unwrap(),
                         p,
                         &mut output,
-                    ) {
-                        panic!("scrypt failed");
-                    }
+                    );
 
                     let params = ::scrypt::Params::new(cf, r, p, 64).unwrap();
                     ::scrypt::scrypt(b"password", b"salt", &params, &mut expected).unwrap();
@@ -442,8 +364,10 @@ mod tests {
     fn test_scrypt_ro_mix_api<R: ArrayLength + NonZero>() {
         const CF: u8 = 10;
         unsafe {
-            let mut reference_buffer0 = BufferSet::<_, R>::new_boxed(CF.try_into().unwrap());
-            let mut reference_buffer1 = BufferSet::<_, R>::new_boxed(CF.try_into().unwrap());
+            let mut reference_buffer0 =
+                crate::fixed_r::BufferSet::<_, R>::new_boxed(CF.try_into().unwrap());
+            let mut reference_buffer1 =
+                crate::fixed_r::BufferSet::<_, R>::new_boxed(CF.try_into().unwrap());
             reference_buffer0.set_input(&Pbkdf2HmacSha256State::new(b"password0"), b"salt");
             reference_buffer1.set_input(&Pbkdf2HmacSha256State::new(b"password1"), b"salt");
 

@@ -21,11 +21,10 @@ Portable-simd support requires a nightly compiler and `--features portable-simd`
 - Password Cracking
 - System Benchmarking
 
-This is _NOT_ audited cryptography! Don't use it for password hashing, etc.
+Although we have a large suite of tests and validation self-tests, this is _NOT_ audited cryptography and thus I can't recommend it for password hashing. You are responsible for your own security.
 
 ## Limitations
 
-- `R` must be a compile time constant or monomorphized, the demo binary and compat.rs has code for R=1..=32.
 - For mining or cases with low difficulty you might want to bring your own multi-buffer PBKDF core, the built in `Pbkdf2HmacSha256State` is designed for moderate to high difficulty cases where it is not called a lot. There are raw buffer APIs that allow you to do it easily. For really really low difficulty where the problem becomes more about data locality than software pipelining this program is may not be optimal, please compare with a full multi-buffer implementation.
 
 ## Demo Binary

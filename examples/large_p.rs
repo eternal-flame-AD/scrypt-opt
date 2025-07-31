@@ -1,6 +1,6 @@
 //! Example for hashing where P is large.
 use scrypt_opt::{
-    Block, BufferSet,
+    fixed_r::{Block, BufferSet},
     generic_array::GenericArray,
     generic_array::typenum::{U8, U10, U16, U64, Unsigned},
     memory::Align64,

@@ -61,6 +61,7 @@ strip = "none"
 
 [dev-dependencies]
 criterion = { version = "0.6", features = ["html_reports"] }
+num_cpus = "1.17"
 pbkdf2 = "0.12"
 salsa20 = "0.10"
 scrypt = "0.11"

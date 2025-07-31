@@ -1,7 +1,7 @@
 //! Example of using the pipeline API to crack a password.
 use core::marker::PhantomData;
 use scrypt_opt::{
-    Block, BufferSet,
+    fixed_r::{Block, BufferSet},
     generic_array::ArrayLength,
     generic_array::GenericArray,
     generic_array::typenum::{NonZero, U8, U14, U64, Unsigned},

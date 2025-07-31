@@ -12,7 +12,7 @@ use generic_array::{
     },
 };
 use scrypt_opt::{
-    BufferSet,
+    fixed_r::BufferSet,
     memory::Align64,
     pbkdf2_1::Pbkdf2HmacSha256State,
     pipeline::PipelineContext,
@@ -293,7 +293,7 @@ fn pow<R: ArrayLength + NonZero + Send + Sync>(
 
     const NOT_A_SOLUTION: u64 = u64::MAX;
 
-    let required_blocks = scrypt_opt::minimum_blocks(cf);
+    let required_blocks = scrypt_opt::fixed_r::minimum_blocks(cf);
 
     let search_max = if nonce_len == 8 {
         u64::MAX - 1
@@ -311,7 +311,7 @@ fn pow<R: ArrayLength + NonZero + Send + Sync>(
         solved_mutex: Mutex<(Box<[u8]>, u64)>,
         _marker: PhantomData<R>,
     }
-    let mut full_slice = MultiThreadedHugeSlice::<Align64<scrypt_opt::Block<R>>>::new(
+    let mut full_slice = MultiThreadedHugeSlice::<Align64<scrypt_opt::fixed_r::Block<R>>>::new(
         required_blocks * 2,
         num_threads,
     );
@@ -356,13 +356,13 @@ fn pow<R: ArrayLength + NonZero + Send + Sync>(
                     let (buffer0_inner, buffer1_inner) =
                         local_buffer.as_mut().split_at_mut(required_blocks);
 
-                    let mut buffers0 = scrypt_opt::BufferSet::<
-                        &mut [Align64<scrypt_opt::Block<R>>],
+                    let mut buffers0 = scrypt_opt::fixed_r::BufferSet::<
+                        &mut [Align64<scrypt_opt::fixed_r::Block<R>>],
                         R,
                     >::new(buffer0_inner);
 
-                    let mut buffers1 = scrypt_opt::BufferSet::<
-                        &mut [Align64<scrypt_opt::Block<R>>],
+                    let mut buffers1 = scrypt_opt::fixed_r::BufferSet::<
+                        &mut [Align64<scrypt_opt::fixed_r::Block<R>>],
                         R,
                     >::new(buffer1_inner);
 
@@ -375,7 +375,7 @@ fn pow<R: ArrayLength + NonZero + Send + Sync>(
                     impl<'a, 'b, R: ArrayLength + NonZero + Send + Sync>
                         PipelineContext<
                             (&'a State<R>, &'b mut [u8]),
-                            &mut [Align64<scrypt_opt::Block<R>>],
+                            &mut [Align64<scrypt_opt::fixed_r::Block<R>>],
                             R,
                             u64,
                         > for NonceState<R>
@@ -384,7 +384,10 @@ fn pow<R: ArrayLength + NonZero + Send + Sync>(
                         fn begin(
                             &mut self,
                             (pipeline_state, _): &mut (&'a State<R>, &'b mut [u8]),
-                            buffer_set: &mut BufferSet<&mut [Align64<scrypt_opt::Block<R>>], R>,
+                            buffer_set: &mut BufferSet<
+                                &mut [Align64<scrypt_opt::fixed_r::Block<R>>],
+                                R,
+                            >,
                         ) {
                             buffer_set.set_input(&self.hmac_state, &pipeline_state.salt);
                         }
@@ -393,8 +396,8 @@ fn pow<R: ArrayLength + NonZero + Send + Sync>(
                         fn drain(
                             self,
                             (pipeline_state, local_output): &mut (&'a State<R>, &'b mut [u8]),
-                            buffer_set: &mut scrypt_opt::BufferSet<
-                                &mut [Align64<scrypt_opt::Block<R>>],
+                            buffer_set: &mut scrypt_opt::fixed_r::BufferSet<
+                                &mut [Align64<scrypt_opt::fixed_r::Block<R>>],
                                 R,
                             >,
                         ) -> Option<u64> {
@@ -517,9 +520,9 @@ fn throughput<Pipeline: Bit, R: ArrayLength + NonZero>(
 ) {
     let counter = AtomicU64::new(0);
 
-    let required_blocks = scrypt_opt::minimum_blocks(cf);
+    let required_blocks = scrypt_opt::fixed_r::minimum_blocks(cf);
 
-    let mut full_slice = MultiThreadedHugeSlice::<Align64<scrypt_opt::Block<R>>>::new(
+    let mut full_slice = MultiThreadedHugeSlice::<Align64<scrypt_opt::fixed_r::Block<R>>>::new(
         if Pipeline::BOOL {
             required_blocks * 2
         } else {
@@ -551,8 +554,8 @@ fn throughput<Pipeline: Bit, R: ArrayLength + NonZero>(
                     let (buffer0_inner, buffer1_inner) =
                         local_buffer.as_mut().split_at_mut(required_blocks);
 
-                    let mut buffers0 = scrypt_opt::BufferSet::<
-                        &mut [Align64<scrypt_opt::Block<R>>],
+                    let mut buffers0 = scrypt_opt::fixed_r::BufferSet::<
+                        &mut [Align64<scrypt_opt::fixed_r::Block<R>>],
                         R,
                     >::new(buffer0_inner);
 
@@ -571,8 +574,8 @@ fn throughput<Pipeline: Bit, R: ArrayLength + NonZero>(
                         return;
                     }
 
-                    let mut buffers1 = scrypt_opt::BufferSet::<
-                        &mut [Align64<scrypt_opt::Block<R>>],
+                    let mut buffers1 = scrypt_opt::fixed_r::BufferSet::<
+                        &mut [Align64<scrypt_opt::fixed_r::Block<R>>],
                         R,
                     >::new(buffer1_inner);
 
@@ -595,15 +598,19 @@ fn throughput<Pipeline: Bit, R: ArrayLength + NonZero>(
                     }
 
                     impl<R: ArrayLength + NonZero>
-                        PipelineContext<&AtomicU64, &mut [Align64<scrypt_opt::Block<R>>], R, ()>
-                        for Context
+                        PipelineContext<
+                            &AtomicU64,
+                            &mut [Align64<scrypt_opt::fixed_r::Block<R>>],
+                            R,
+                            (),
+                        > for Context
                     {
                         #[inline(always)]
                         fn begin(
                             &mut self,
                             _state: &mut &AtomicU64,
-                            buffer_set: &mut scrypt_opt::BufferSet<
-                                &mut [Align64<scrypt_opt::Block<R>>],
+                            buffer_set: &mut scrypt_opt::fixed_r::BufferSet<
+                                &mut [Align64<scrypt_opt::fixed_r::Block<R>>],
                                 R,
                             >,
                         ) {
@@ -614,8 +621,8 @@ fn throughput<Pipeline: Bit, R: ArrayLength + NonZero>(
                         fn drain(
                             self,
                             counter: &mut &AtomicU64,
-                            buffer_set: &mut scrypt_opt::BufferSet<
-                                &mut [Align64<scrypt_opt::Block<R>>],
+                            buffer_set: &mut scrypt_opt::fixed_r::BufferSet<
+                                &mut [Align64<scrypt_opt::fixed_r::Block<R>>],
                                 R,
                             >,
                         ) -> Option<()> {
@@ -703,9 +710,14 @@ fn main() {
             let (key, salt) = (key.unwrap(), salt.unwrap());
 
             let mut output = vec![0; output_len].into_boxed_slice();
-            if !scrypt_opt::compat::scrypt(&key, &salt, cf, r, p, &mut output) {
-                panic!("invalid/unsupported r value");
-            }
+            scrypt_opt::compat::scrypt(
+                &key,
+                &salt,
+                cf,
+                r.try_into().expect("invalid r value"),
+                p,
+                &mut output,
+            );
 
             if output_raw {
                 stdout.write_all(&output).unwrap();

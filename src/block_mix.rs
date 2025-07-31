@@ -1,3 +1,4 @@
+#[allow(unused_macros, reason = "false alarm")]
 macro_rules! block_mix {
     ($r:expr; [<$s:ty> $input:expr => $output:expr]) => {
         #[allow(unused_unsafe)]
@@ -29,7 +30,7 @@ macro_rules! block_mix {
                 }};
             }
 
-            if $r <= MAX_R_FOR_UNROLLING {
+            if $r <= crate::fixed_r::MAX_R_FOR_UNROLLING {
                 repeat8!(i, {
                     if i < $r {
                         iteration!(i);
@@ -77,7 +78,7 @@ macro_rules! block_mix {
                 }};
             }
 
-            if $r <= MAX_R_FOR_UNROLLING {
+            if $r <= crate::fixed_r::MAX_R_FOR_UNROLLING {
                 repeat8!(i, {
                     if i < $r {
                         iteration!(i);
@@ -94,7 +95,7 @@ macro_rules! block_mix {
         }
     };
 }
-
+#[allow(unused_macros, reason = "false alarm")]
 macro_rules! block_mix_dyn {
     ($r:expr; [<$s:ty> $input:expr => $output:expr]) => {{
         let output: &mut [Align64<[u8; 64]>] = $output;
@@ -155,86 +156,4 @@ macro_rules! block_mix_dyn {
             }
         }
     }};
-}
-
-#[inline(always)]
-/// Perform the BlockMix operation on 2R 128-bit blocks
-pub fn block_mix_dyn<
-    'a,
-    B: crate::BlockType,
-    S: Salsa20<Lanes = U1, Block = B>,
-    I: ScryptBlockMixInput<'a, B>,
->(
-    input: &I,
-    output: &mut [Align64<[u8; 64]>],
-) {
-    let r = output.len() / 2;
-
-    let mut x: S::Block = unsafe { input.load(r * 2 - 1) };
-
-    for i in 0..r {
-        x.xor_with(unsafe { input.load(2 * i) });
-        let mut b = S::read(GenericArray::from_array([&x]));
-        b.keystream::<4>();
-        b.write(GenericArray::from_array([&mut x]));
-
-        unsafe {
-            x.write_to_ptr(output[i].as_mut_ptr().cast());
-        }
-
-        x.xor_with(unsafe { input.load(2 * i + 1) });
-        let mut b = S::read(GenericArray::from_array([&x]));
-        b.keystream::<4>();
-        b.write(GenericArray::from_array([&mut x]));
-
-        unsafe {
-            x.write_to_ptr(output[i + r].as_mut_ptr().cast());
-        }
-    }
-}
-
-#[inline(always)]
-/// Perform the BlockMix operation on 2R 256-bit blocks
-pub fn block_mix_dyn_mb2<
-    'a,
-    'b,
-    B: crate::BlockType,
-    S: Salsa20<Lanes = U2, Block = B>,
-    I0: ScryptBlockMixInput<'a, B>,
-    I1: ScryptBlockMixInput<'b, B>,
->(
-    input0: &I0,
-    output0: &mut [Align64<[u8; 64]>],
-    input1: &I1,
-    output1: &mut [Align64<[u8; 64]>],
-) {
-    debug_assert_eq!(output0.len(), output1.len());
-    let r = output0.len().min(output1.len()) / 2;
-
-    let mut x0: S::Block = unsafe { input0.load(r * 2 - 1) };
-    let mut x1: S::Block = unsafe { input1.load(r * 2 - 1) };
-
-    for i in 0..r {
-        x0.xor_with(unsafe { input0.load(2 * i) });
-        x1.xor_with(unsafe { input1.load(2 * i) });
-        let mut b0 = S::read(GenericArray::from_array([&x0, &x1]));
-        b0.keystream::<4>();
-        b0.write(GenericArray::from_array([&mut x0, &mut x1]));
-
-        unsafe {
-            x0.write_to_ptr(output0[i].as_mut_ptr().cast());
-            x1.write_to_ptr(output1[i].as_mut_ptr().cast());
-        }
-
-        x0.xor_with(unsafe { input0.load(2 * i + 1) });
-        x1.xor_with(unsafe { input1.load(2 * i + 1) });
-        let mut b0 = S::read(GenericArray::from_array([&x0, &x1]));
-        b0.keystream::<4>();
-        b0.write(GenericArray::from_array([&mut x0, &mut x1]));
-
-        unsafe {
-            x0.write_to_ptr(output0[i + r].as_mut_ptr().cast());
-            x1.write_to_ptr(output1[i + r].as_mut_ptr().cast());
-        }
-    }
 }
