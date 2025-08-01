@@ -294,6 +294,7 @@ impl<T> HugeSlice<T> {
                 ));
             }
 
+            #[cfg(target_os = "linux")]
             if let Some(file) = file {
                 let ptr = libc::mmap64(
                     core::ptr::null_mut(),
@@ -384,7 +385,8 @@ impl<T> HugeSlice<T> {
         not(target_os = "android"),
         not(target_os = "linux")
     ))]
-    pub fn new(len: usize) -> Result<Self, std::io::Error> {
+    /// Create a new hugepage-backed buffer
+    pub fn new(_len: usize) -> Result<Self, std::io::Error> {
         Err(std::io::Error::new(
             std::io::ErrorKind::Other,
             "Huge page not supported on this platform",

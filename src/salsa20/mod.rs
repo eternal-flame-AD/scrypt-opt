@@ -9,7 +9,7 @@ pub(crate) mod x86_64;
 use generic_array::{
     ArrayLength, GenericArray,
     sequence::GenericSequence,
-    typenum::{U1, U2},
+    typenum::{IsLessOrEqual, U1, U2},
 };
 
 #[cfg(feature = "portable-simd")]
@@ -123,6 +123,28 @@ impl BlockType for [core::arch::x86_64::__m256i; 2] {
     }
 }
 
+#[cfg(target_arch = "x86_64")]
+impl BlockType for [core::arch::x86_64::__m128i; 4] {
+    #[inline(always)]
+    unsafe fn read_from_ptr(ptr: *const Self) -> Self {
+        unsafe { core::ptr::read(ptr) }
+    }
+    #[inline(always)]
+    unsafe fn write_to_ptr(self, ptr: *mut Self) {
+        unsafe { core::ptr::write(ptr, self) };
+    }
+    #[inline(always)]
+    fn xor_with(&mut self, other: Self) {
+        use core::arch::x86_64::*;
+        unsafe {
+            self[0] = _mm_xor_si128(self[0], other[0]);
+            self[1] = _mm_xor_si128(self[1], other[1]);
+            self[2] = _mm_xor_si128(self[2], other[2]);
+            self[3] = _mm_xor_si128(self[3], other[3]);
+        }
+    }
+}
+
 impl BlockType for Align64<[u32; 16]> {
     unsafe fn read_from_ptr(ptr: *const Self) -> Self {
         unsafe { ptr.read() }
@@ -213,12 +235,11 @@ impl<Lanes: ArrayLength> Salsa20 for BlockScalar<Lanes> {
         }
     }
 
-    #[inline(always)]
     fn keystream<const ROUND_PAIRS: usize>(&mut self) {
         let mut w = self.w.clone();
 
-        for i in 0..Lanes::USIZE {
-            for _ in 0..ROUND_PAIRS {
+        for _ in 0..ROUND_PAIRS {
+            for i in 0..Lanes::USIZE {
                 quarter_words!(w[i], 0, 4, 8, 12);
                 quarter_words!(w[i], 5, 9, 13, 1);
                 quarter_words!(w[i], 10, 14, 2, 6);

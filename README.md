@@ -1,5 +1,9 @@
 # scrypt-opt
 
+[![Builds](https://img.shields.io/github/actions/workflow/status/eternal-flame-ad/scrypt-opt/build.yml?branch=main&label=Builds)](https://github.com/eternal-flame-AD/scrypt-opt/actions/workflows/build.yml)
+[![Tests](https://img.shields.io/github/actions/workflow/status/eternal-flame-ad/scrypt-opt/test.yml?branch=main&label=Tests)](https://github.com/eternal-flame-AD/scrypt-opt/actions/workflows/test.yml)
+[![docs.rs](https://img.shields.io/docsrs/scrypt-opt)](https://docs.rs/scrypt-opt/)
+
 A pure-rust, permissively licensed, optimized scrypt implementation for moderate to high difficulty cases with AVX2 and AVX-512 intrinsics core and a portable-simd core.
 
 ## System Requirements

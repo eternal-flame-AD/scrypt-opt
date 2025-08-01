@@ -440,13 +440,12 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
     }
 
     /// Start an interleaved pipeline using the default engine by performing the $RoMix_{Front}$ operation.
-    #[inline(always)]
     pub fn ro_mix_front(&mut self) {
         #[cfg(all(not(test), target_arch = "x86_64", not(target_feature = "avx2")))]
         {
             if crate::features::Avx2.check() {
                 unsafe {
-                    self.ro_mix_front_ex_avx2::<crate::salsa20::x86_64::BlockAvx2>();
+                    self.ro_mix_front_ex_avx2::<crate::salsa20::x86_64::BlockSse2<U1>>();
                 }
                 return;
             }
@@ -456,13 +455,12 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
     }
 
     /// Drain an interleaved pipeline using the default engine by performing the $RoMix_{Back}$ operation.
-    #[inline(always)]
     pub fn ro_mix_back(&mut self) {
         #[cfg(all(not(test), target_arch = "x86_64", not(target_feature = "avx2")))]
         {
             if crate::features::Avx2.check() {
                 unsafe {
-                    self.ro_mix_back_ex_avx2::<crate::salsa20::x86_64::BlockAvx2>();
+                    self.ro_mix_back_ex_avx2::<crate::salsa20::x86_64::BlockSse2<U1>>();
                 }
                 return;
             }
@@ -484,8 +482,8 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
         {
             if crate::features::Avx2.check() {
                 unsafe {
-                    self.ro_mix_front_ex_avx2::<crate::salsa20::x86_64::BlockAvx2>();
-                    self.ro_mix_back_ex_avx2::<crate::salsa20::x86_64::BlockAvx2>();
+                    self.ro_mix_front_ex_avx2::<crate::salsa20::x86_64::BlockSse2<U1>>();
+                    self.ro_mix_back_ex_avx2::<crate::salsa20::x86_64::BlockSse2<U1>>();
                 }
                 return;
             }
@@ -547,7 +545,7 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
         {
             if crate::features::Avx2.check() {
                 unsafe {
-                    buffers0.ro_mix_front_ex_avx2::<crate::salsa20::x86_64::BlockAvx2>();
+                    buffers0.ro_mix_front_ex_avx2::<crate::salsa20::x86_64::BlockSse2<U1>>();
                     loop {
                         buffers0
                             .ro_mix_interleaved_ex_avx2::<crate::salsa20::x86_64::BlockAvx2Mb2>(
@@ -568,7 +566,7 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
                         input_m2 = input_m1;
                         input_m1 = input;
                     }
-                    buffers0.ro_mix_back_ex_avx2::<crate::salsa20::x86_64::BlockAvx2>();
+                    buffers0.ro_mix_back_ex_avx2::<crate::salsa20::x86_64::BlockSse2<U1>>();
                     return input_m1.drain(state, buffers0);
                 }
             }
@@ -602,7 +600,6 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
     BufferSet<Q, R>
 {
     /// Perform the RoMix operation using AVX-512 registers as temporary storage.
-    #[inline(always)]
     pub(super) fn scrypt_ro_mix_ex_zmm<
         S: Salsa20<Lanes = U1, Block = core::arch::x86_64::__m512i>,
     >(
@@ -676,7 +673,6 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
     /// # Panics
     ///
     /// Panics if the buffers are of different equivalent Cost Factors.
-    #[inline(always)]
     pub(super) fn ro_mix_interleaved_ex_zmm<
         S: Salsa20<Lanes = U2, Block = core::arch::x86_64::__m512i>,
     >(

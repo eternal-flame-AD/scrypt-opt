@@ -3,13 +3,21 @@ use core::{arch::x86_64::*, sync::atomic::AtomicU8};
 use super::*;
 use generic_array::{
     ArrayLength, GenericArray,
-    typenum::{U1, U2},
+    typenum::{IsLessOrEqual, U1, U2},
 };
 
 use crate::{
     Align64,
     simd::{Compose, ConcatLo, ExtractU32x2, FlipTable16, Inverse, Swizzle},
 };
+
+#[rustfmt::skip]
+macro_rules! repeat2 {
+    ($i:ident, $c:block) => {
+        { let $i = 0; $c; }
+        { let $i = 1; $c; }
+    };
+}
 
 #[cfg(target_feature = "avx512vl")]
 macro_rules! mm_rol_epi32x {
@@ -172,17 +180,19 @@ impl Salsa20 for BlockAvx512F {
 }
 
 /// A solution for 1 lane of 512-bit blocks
-pub struct BlockAvx2 {
-    a: __m128i,
-    b: __m128i,
-    c: __m128i,
-    d: __m128i,
+pub struct BlockSse2<Lanes: ArrayLength> {
+    a: GenericArray<__m128i, Lanes>,
+    b: GenericArray<__m128i, Lanes>,
+    c: GenericArray<__m128i, Lanes>,
+    d: GenericArray<__m128i, Lanes>,
 }
 
-impl BlockAvx2 {
-    #[cfg_attr(target_feature = "avx2", inline(always))]
-    #[cfg_attr(not(target_feature = "avx2"), target_feature(enable = "avx2"))]
-    fn shuffle_in_impl(ptr: &mut Align64<[u32; 16]>) {
+impl<Lanes: ArrayLength + IsLessOrEqual<U2>> Salsa20 for BlockSse2<Lanes> {
+    type Lanes = Lanes;
+    type Block = [__m128i; 4];
+
+    #[inline(always)]
+    fn shuffle_in(ptr: &mut Align64<[u32; 16]>) {
         unsafe {
             let tmp = ptr.clone();
             for i in 0..16 {
@@ -191,9 +201,8 @@ impl BlockAvx2 {
         }
     }
 
-    #[cfg_attr(target_feature = "avx2", inline(always))]
-    #[cfg_attr(not(target_feature = "avx2"), target_feature(enable = "avx2"))]
-    fn shuffle_out_impl(ptr: &mut Align64<[u32; 16]>) {
+    #[inline(always)]
+    fn shuffle_out(ptr: &mut Align64<[u32; 16]>) {
         unsafe {
             let tmp = ptr.clone();
             for i in 0..16 {
@@ -202,82 +211,67 @@ impl BlockAvx2 {
         }
     }
 
-    #[cfg_attr(target_feature = "avx2", inline(always))]
-    #[cfg_attr(not(target_feature = "avx2"), target_feature(enable = "avx2"))]
-    fn read_impl(ptr: GenericArray<&[__m256i; 2], U1>) -> Self {
+    #[inline(always)]
+    fn read(ptr: GenericArray<&Self::Block, Lanes>) -> Self {
         unsafe {
-            let [ab, dc] = *ptr[0];
-            let a = _mm256_castsi256_si128(ab);
-            let b = _mm256_extracti128_si256(ab, 1);
-            let d = _mm256_castsi256_si128(dc);
-            let c = _mm256_extracti128_si256(dc, 1);
+            let mut a: GenericArray<__m128i, Lanes> =
+                unsafe { core::mem::MaybeUninit::uninit().assume_init() };
+            let mut b: GenericArray<__m128i, Lanes> =
+                unsafe { core::mem::MaybeUninit::uninit().assume_init() };
+            let mut c: GenericArray<__m128i, Lanes> =
+                unsafe { core::mem::MaybeUninit::uninit().assume_init() };
+            let mut d: GenericArray<__m128i, Lanes> =
+                unsafe { core::mem::MaybeUninit::uninit().assume_init() };
+
+            repeat2!(i, {
+                if i < Lanes::USIZE {
+                    let [ai, bi, di, ci] = *ptr[i];
+                    a[i] = ai;
+                    b[i] = bi;
+                    c[i] = ci;
+                    d[i] = di;
+                }
+            });
 
             Self { a, b, c, d }
         }
     }
 
-    #[cfg_attr(target_feature = "avx2", inline(always))]
-    #[cfg_attr(not(target_feature = "avx2"), target_feature(enable = "avx2"))]
-    fn write_impl(&self, mut ptr: GenericArray<&mut [__m256i; 2], U1>) {
-        unsafe {
-            let ab = _mm256_setr_m128i(self.a, self.b);
-            let dc = _mm256_setr_m128i(self.d, self.c);
-            ptr[0][0] = _mm256_add_epi32(ptr[0][0], ab);
-            ptr[0][1] = _mm256_add_epi32(ptr[0][1], dc);
-        }
-    }
-
-    #[cfg_attr(target_feature = "avx2", inline(always))]
-    #[cfg_attr(not(target_feature = "avx2"), target_feature(enable = "avx2"))]
-    fn keystream_impl<const ROUND_PAIRS: usize>(&mut self) {
-        unsafe {
-            for _ in 0..(ROUND_PAIRS * 2) {
-                quarter_xmmwords!(self.a, self.b, self.c, self.d);
-
-                // a stays in place
-                // b = left shuffle d by 1 element
-                self.d = _mm_shuffle_epi32(self.d, 0b00_11_10_01);
-                // c = left shuffle c by 2 elements
-                self.c = _mm_shuffle_epi32(self.c, 0b01_00_11_10);
-                // d = left shuffle b by 3 elements
-                self.b = _mm_shuffle_epi32(self.b, 0b10_01_00_11);
-                (self.b, self.d) = (self.d, self.b);
-            }
-        }
-    }
-}
-
-impl Salsa20 for BlockAvx2 {
-    type Lanes = U1;
-    type Block = [__m256i; 2];
-
     #[inline(always)]
-    fn shuffle_in(ptr: &mut Align64<[u32; 16]>) {
+    fn write(&self, mut ptr: GenericArray<&mut Self::Block, Lanes>) {
         unsafe {
-            BlockAvx2::shuffle_in_impl(ptr);
+            repeat2!(i, {
+                if i < Lanes::USIZE {
+                    ptr[i][0] = _mm_add_epi32(ptr[i][0], self.a[i]);
+                    ptr[i][1] = _mm_add_epi32(ptr[i][1], self.b[i]);
+                    ptr[i][2] = _mm_add_epi32(ptr[i][2], self.d[i]);
+                    ptr[i][3] = _mm_add_epi32(ptr[i][3], self.c[i]);
+                }
+            });
         }
-    }
-
-    #[inline(always)]
-    fn shuffle_out(ptr: &mut Align64<[u32; 16]>) {
-        unsafe {
-            BlockAvx2::shuffle_out_impl(ptr);
-        }
-    }
-
-    #[inline(always)]
-    fn read(ptr: GenericArray<&Self::Block, U1>) -> Self {
-        unsafe { BlockAvx2::read_impl(ptr) }
-    }
-
-    #[inline(always)]
-    fn write(&self, mut ptr: GenericArray<&mut Self::Block, U1>) {
-        unsafe { BlockAvx2::write_impl(self, ptr) }
     }
 
     #[inline(always)]
     fn keystream<const ROUND_PAIRS: usize>(&mut self) {
-        unsafe { BlockAvx2::keystream_impl::<ROUND_PAIRS>(self) }
+        unsafe {
+            for _ in 0..(ROUND_PAIRS * 2) {
+                repeat2!(lane, {
+                    if lane < Lanes::USIZE {
+                        quarter_xmmwords!(self.a[lane], self.b[lane], self.c[lane], self.d[lane]);
+
+                        // a stays in place
+                        // b = left shuffle d by 1 element
+                        self.d[lane] = _mm_shuffle_epi32(self.d[lane], 0b00_11_10_01);
+                        // c = left shuffle c by 2 elements
+                        self.c[lane] = _mm_shuffle_epi32(self.c[lane], 0b01_00_11_10);
+                        // d = left shuffle b by 3 elements
+                        self.b[lane] = _mm_shuffle_epi32(self.b[lane], 0b10_01_00_11);
+
+                        (self.b[lane], self.d[lane]) = (self.d[lane], self.b[lane]);
+                    }
+                });
+            }
+        }
     }
 }
 
@@ -491,14 +485,14 @@ impl Salsa20 for BlockAvx2Mb2 {
     #[inline(always)]
     fn shuffle_in(ptr: &mut Align64<[u32; 16]>) {
         unsafe {
-            BlockAvx2::shuffle_in_impl(ptr);
+            BlockSse2::<U2>::shuffle_in(ptr);
         }
     }
 
     #[inline(always)]
     fn shuffle_out(ptr: &mut Align64<[u32; 16]>) {
         unsafe {
-            BlockAvx2::shuffle_out_impl(ptr);
+            BlockSse2::<U2>::shuffle_out(ptr);
         }
     }
 
@@ -551,9 +545,8 @@ mod tests {
         assert_eq!(output, expected);
     }
 
-    #[cfg(target_feature = "avx2")]
-    fn test_keystream_avx2<const ROUND_PAIRS: usize>() {
-        test_shuffle_in_out_identity::<BlockAvx2>();
+    fn test_keystream_sse2<const ROUND_PAIRS: usize>() {
+        test_shuffle_in_out_identity::<BlockSse2<U1>>();
 
         let test_input: Align64<[u32; 16]> = Align64(core::array::from_fn(|i| i as u32));
         let mut expected = test_input.clone();
@@ -563,23 +556,27 @@ mod tests {
         block.write(GenericArray::from_array([&mut expected]));
 
         let mut core_input = test_input.clone();
-        BlockAvx2::shuffle_in(&mut core_input);
+        BlockSse2::<U1>::shuffle_in(&mut core_input);
         let mut result = unsafe {
             [
-                _mm256_load_si256(core_input.as_ptr().cast::<__m256i>()),
-                _mm256_load_si256(core_input.as_ptr().cast::<__m256i>().add(1)),
+                _mm_load_si128(core_input.as_ptr().cast::<__m128i>()),
+                _mm_load_si128(core_input.as_ptr().cast::<__m128i>().add(1)),
+                _mm_load_si128(core_input.as_ptr().cast::<__m128i>().add(2)),
+                _mm_load_si128(core_input.as_ptr().cast::<__m128i>().add(3)),
             ]
         };
-        let mut block_v = BlockAvx2::read(GenericArray::from_array([&result]));
+        let mut block_v = BlockSse2::<U1>::read(GenericArray::from_array([&result]));
         block_v.keystream::<ROUND_PAIRS>();
         block_v.write(GenericArray::from_array([&mut result]));
 
         let mut output = Align64([0u32; 16]);
         unsafe {
-            _mm256_store_si256(output.as_mut_ptr().cast::<__m256i>(), result[0]);
-            _mm256_store_si256(output.as_mut_ptr().cast::<__m256i>().add(1), result[1]);
+            _mm_store_si128(output.as_mut_ptr().cast::<__m128i>(), result[0]);
+            _mm_store_si128(output.as_mut_ptr().cast::<__m128i>().add(1), result[1]);
+            _mm_store_si128(output.as_mut_ptr().cast::<__m128i>().add(2), result[2]);
+            _mm_store_si128(output.as_mut_ptr().cast::<__m128i>().add(3), result[3]);
         }
-        BlockAvx2::shuffle_out(&mut output);
+        BlockSse2::<U1>::shuffle_out(&mut output);
 
         assert_eq!(output, expected);
     }
@@ -746,28 +743,24 @@ mod tests {
         test_keystream_mb2_avx512f::<5>();
     }
 
-    #[cfg(target_feature = "avx2")]
     #[test]
-    fn test_keystream_avx2_0() {
-        test_keystream_avx2::<0>();
+    fn test_keystream_sse2_0() {
+        test_keystream_sse2::<0>();
     }
 
-    #[cfg(target_feature = "avx2")]
     #[test]
-    fn test_keystream_avx2_2() {
-        test_keystream_avx2::<1>();
+    fn test_keystream_sse2_2() {
+        test_keystream_sse2::<1>();
     }
 
-    #[cfg(target_feature = "avx2")]
     #[test]
-    fn test_keystream_avx2_8() {
-        test_keystream_avx2::<4>();
+    fn test_keystream_sse2_8() {
+        test_keystream_sse2::<4>();
     }
 
-    #[cfg(target_feature = "avx2")]
     #[test]
-    fn test_keystream_avx2_10() {
-        test_keystream_avx2::<5>();
+    fn test_keystream_sse2_10() {
+        test_keystream_sse2::<5>();
     }
 
     #[cfg(target_feature = "avx2")]

@@ -5,7 +5,7 @@ edition = "2024"
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
-version = "0.1.0"
+version = "0.2.0"
 documentation.workspace = true
 categories.workspace = true
 keywords.workspace = true
@@ -59,7 +59,7 @@ debug = true
 strip = "none"
 
 [dev-dependencies]
-criterion = { version = "0.6", features = ["html_reports"] }
+criterion = { version = "0.7", features = ["html_reports"] }
 num_cpus = "1.17"
 pbkdf2 = "0.12"
 salsa20 = "0.10"

@@ -83,6 +83,11 @@ use crate::salsa20::{BlockType, Salsa20};
 
 include!("block_mix.rs");
 
+// rough order:
+// 1. kernels that I know is optimal
+// 2. portable simd
+// 3. kernels that should work better than scalar
+// 4. scalar
 #[cfg(target_arch = "x86_64")]
 cfg_if::cfg_if! {
     if #[cfg(target_feature = "avx512f")] {
@@ -92,7 +97,7 @@ cfg_if::cfg_if! {
         pub type DefaultEngine2 = salsa20::x86_64::BlockAvx512FMb2;
     } else if #[cfg(target_feature = "avx2")] {
         /// The default engine for this architecture that is guaranteed to be available
-        pub type DefaultEngine1 = salsa20::x86_64::BlockAvx2;
+        pub type DefaultEngine1 = salsa20::x86_64::BlockSse2<U1>;
         /// The default engine for this architecture that is guaranteed to be available
         pub type DefaultEngine2 = salsa20::x86_64::BlockAvx2Mb2;
     } else if #[cfg(feature = "portable-simd")] {
@@ -100,6 +105,11 @@ cfg_if::cfg_if! {
         pub type DefaultEngine1 = salsa20::BlockPortableSimd;
         /// The default engine for this architecture that is guaranteed to be available
         pub type DefaultEngine2 = salsa20::BlockPortableSimd2;
+    } else if #[cfg(target_arch = "x86_64")] {
+        /// The default engine for this architecture that is guaranteed to be available
+        pub type DefaultEngine1 = salsa20::x86_64::BlockSse2<U1>;
+        /// The default engine for this architecture that is guaranteed to be available
+        pub type DefaultEngine2 = salsa20::x86_64::BlockSse2<U2>;
     } else {
         /// The default engine for this architecture that is guaranteed to be available
         pub type DefaultEngine1 = salsa20::BlockScalar<U1>;
@@ -493,7 +503,7 @@ impl<Q: AsRef<[Align64<fixed_r::Block<U1>>]> + AsMut<[Align64<fixed_r::Block<U1>
         #[cfg(all(target_arch = "x86_64", not(target_feature = "avx2")))]
         {
             if features::Avx2.check() {
-                unsafe { ro_mix_front_ex_dyn_avx2::<salsa20::x86_64::BlockAvx2>(v, r, cf) }
+                unsafe { ro_mix_front_ex_dyn_avx2::<salsa20::x86_64::BlockSse2<U1>>(v, r, cf) }
                 return;
             }
         }
@@ -507,7 +517,9 @@ impl<Q: AsRef<[Align64<fixed_r::Block<U1>>]> + AsMut<[Align64<fixed_r::Block<U1>
         #[cfg(all(target_arch = "x86_64", not(target_feature = "avx2")))]
         {
             if features::Avx2.check() {
-                return unsafe { ro_mix_back_ex_dyn_avx2::<salsa20::x86_64::BlockAvx2>(v, r, cf) };
+                return unsafe {
+                    ro_mix_back_ex_dyn_avx2::<salsa20::x86_64::BlockSse2<U1>>(v, r, cf)
+                };
             }
         }
 
@@ -1047,7 +1059,7 @@ mod tests {
         test_ro_mix_cas_interleaved_1_avx2,
         test_ro_mix_cas_interleaved_ex,
         U1,
-        salsa20::x86_64::BlockAvx2,
+        salsa20::x86_64::BlockSse2<U1>,
         salsa20::x86_64::BlockAvx2Mb2
     );
 
@@ -1056,7 +1068,7 @@ mod tests {
         test_ro_mix_cas_interleaved_2_avx2,
         test_ro_mix_cas_interleaved_ex,
         U2,
-        salsa20::x86_64::BlockAvx2,
+        salsa20::x86_64::BlockSse2<U1>,
         salsa20::x86_64::BlockAvx2Mb2
     );
 
@@ -1065,7 +1077,7 @@ mod tests {
         test_ro_mix_cas_interleaved_4_avx2,
         test_ro_mix_cas_interleaved_ex,
         U4,
-        salsa20::x86_64::BlockAvx2,
+        salsa20::x86_64::BlockSse2<U1>,
         salsa20::x86_64::BlockAvx2Mb2
     );
 
@@ -1074,7 +1086,7 @@ mod tests {
         test_ro_mix_cas_interleaved_8_avx2,
         test_ro_mix_cas_interleaved_ex,
         U8,
-        salsa20::x86_64::BlockAvx2,
+        salsa20::x86_64::BlockSse2<U1>,
         salsa20::x86_64::BlockAvx2Mb2
     );
 
@@ -1083,44 +1095,44 @@ mod tests {
         test_ro_mix_cas_interleaved_16_avx2,
         test_ro_mix_cas_interleaved_ex,
         U16,
-        salsa20::x86_64::BlockAvx2,
+        salsa20::x86_64::BlockSse2<U1>,
         salsa20::x86_64::BlockAvx2Mb2
     );
 
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
+    #[cfg(target_arch = "x86_64")]
     write_test!(
-        test_ro_mix_cas_1_avx2,
+        test_ro_mix_cas_1_sse2,
         test_ro_mix_cas_ex,
         U1,
-        salsa20::x86_64::BlockAvx2,
+        salsa20::x86_64::BlockSse2<U1>,
     );
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
+    #[cfg(target_arch = "x86_64")]
     write_test!(
-        test_ro_mix_cas_2_avx2,
+        test_ro_mix_cas_2_sse2,
         test_ro_mix_cas_ex,
         U2,
-        salsa20::x86_64::BlockAvx2,
+        salsa20::x86_64::BlockSse2<U1>,
     );
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
+    #[cfg(target_arch = "x86_64")]
     write_test!(
-        test_ro_mix_cas_4_avx2,
+        test_ro_mix_cas_4_sse2,
         test_ro_mix_cas_ex,
         U4,
-        salsa20::x86_64::BlockAvx2,
+        salsa20::x86_64::BlockSse2<U1>,
     );
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
+    #[cfg(target_arch = "x86_64")]
     write_test!(
-        test_ro_mix_cas_8_avx2,
+        test_ro_mix_cas_8_sse2,
         test_ro_mix_cas_ex,
         U8,
-        salsa20::x86_64::BlockAvx2,
+        salsa20::x86_64::BlockSse2<U1>,
     );
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
+    #[cfg(target_arch = "x86_64")]
     write_test!(
-        test_ro_mix_cas_16_avx2,
+        test_ro_mix_cas_16_sse2,
         test_ro_mix_cas_ex,
         U16,
-        salsa20::x86_64::BlockAvx2,
+        salsa20::x86_64::BlockSse2<U1>,
     );
 
     // scalar versions
