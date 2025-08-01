@@ -6,7 +6,10 @@ use std::{
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use generic_array::typenum::{U1, U8, Unsigned};
 use scrypt_opt::{
-    RoMix, fixed_r::BufferSet, memory::Align64, pbkdf2_1::Pbkdf2HmacSha256State,
+    RoMix,
+    fixed_r::{self, BufferSet},
+    memory::{Align64, MaybeHugeSlice},
+    pbkdf2_1::Pbkdf2HmacSha256State,
     pipeline::PipelineContext,
 };
 
@@ -25,8 +28,10 @@ fn bench_static_vs_dynamic(c: &mut Criterion) {
 
             let mut buf_static0 = BufferSet::<_, $r>::new_boxed($cf.try_into().unwrap());
             let mut buf_static1 = BufferSet::<_, $r>::new_boxed($cf.try_into().unwrap());
-            let mut buf_dynamic0 = vec![Align64([0u8; 64]); 2 * 8 * ((1 << $cf) + 2)];
-            let mut buf_dynamic1 = vec![Align64([0u8; 64]); 2 * 8 * ((1 << $cf) + 2)];
+            let mut buf_dynamic0 =
+                MaybeHugeSlice::<Align64<fixed_r::Block<U1>>>::new(8 * ((1 << $cf) + 2)).0;
+            let mut buf_dynamic1 =
+                MaybeHugeSlice::<Align64<fixed_r::Block<U1>>>::new(8 * ((1 << $cf) + 2)).0;
 
             group.bench_with_input(
                 format!("static/{}/r={}", $cf, <$r>::U32),
@@ -75,8 +80,8 @@ fn bench_static_vs_dynamic(c: &mut Criterion) {
                     b.iter(|| {
                         buf_dynamic1[0][..8].copy_from_slice(&counter.to_le_bytes());
                         counter += 1;
-                        buf_dynamic0.as_mut_slice().ro_mix_interleaved(
-                            &mut buf_dynamic1.as_mut_slice(),
+                        buf_dynamic0.as_mut().ro_mix_interleaved(
+                            &mut buf_dynamic1.as_mut(),
                             r.try_into().unwrap(),
                             cf.try_into().unwrap(),
                         );
@@ -87,7 +92,9 @@ fn bench_static_vs_dynamic(c: &mut Criterion) {
         }};
     }
     write_bench!(10, U1);
+    write_bench!(10, U8);
     write_bench!(14, U8);
+    write_bench!(17, U8);
 }
 
 fn bench_api(c: &mut Criterion) {
@@ -142,7 +149,6 @@ fn bench_api(c: &mut Criterion) {
                                 for _ in 0..num_threads {
                                     s.spawn(|| {
                                         start_barrier.wait();
-
                                         let start = std::time::Instant::now();
 
                                         loop {
@@ -157,7 +163,7 @@ fn bench_api(c: &mut Criterion) {
                                                 &(r + p).to_be_bytes(),
                                                 cf.try_into().unwrap(),
                                                 NonZeroU32::new(r as u32).unwrap(),
-                                                p.try_into().unwrap(),
+                                                NonZeroU32::new(p as u32).unwrap(),
                                                 &mut output,
                                             );
                                             core::hint::black_box(output);
@@ -189,13 +195,12 @@ fn bench_api(c: &mut Criterion) {
                             std::thread::scope(|s| {
                                 for _ in 0..num_threads {
                                     s.spawn(|| {
-                                        start_barrier.wait();
-
-                                        let start = std::time::Instant::now();
-
                                         let params =
                                             scrypt::Params::new(cf, r as u32, p as u32, 64)
                                                 .unwrap();
+
+                                        start_barrier.wait();
+                                        let start = std::time::Instant::now();
 
                                         loop {
                                             let work_id = remaining

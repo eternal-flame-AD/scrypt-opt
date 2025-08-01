@@ -715,7 +715,7 @@ fn main() {
                 &salt,
                 cf,
                 r.try_into().expect("invalid r value"),
-                p,
+                p.try_into().expect("invalid p value"),
                 &mut output,
             );
 

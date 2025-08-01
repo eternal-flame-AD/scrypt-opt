@@ -98,7 +98,7 @@ macro_rules! block_mix {
 #[allow(unused_macros, reason = "false alarm")]
 macro_rules! block_mix_dyn {
     ($r:expr; [<$s:ty> $input:expr => $output:expr]) => {{
-        let output: &mut [Align64<[u8; 64]>] = $output;
+        let output: &mut [Align64<crate::fixed_r::Block<U1>>] = $output;
         let mut x: <$s as Salsa20>::Block = unsafe { $input.load($r * 2 - 1) };
 
         for i in 0..$r {
@@ -108,7 +108,7 @@ macro_rules! block_mix_dyn {
             b.write(GenericArray::from_array([&mut x]));
 
             unsafe {
-                x.write_to_ptr(output[i].as_mut_ptr().cast());
+                x.write_to_ptr(output.as_mut_ptr().cast::<[u8; 64]>().add(i).cast());
             }
 
             x.xor_with(unsafe { $input.load(2 * i + 1) });
@@ -117,7 +117,7 @@ macro_rules! block_mix_dyn {
             b.write(GenericArray::from_array([&mut x]));
 
             unsafe {
-                x.write_to_ptr(output[i + $r].as_mut_ptr().cast());
+                x.write_to_ptr(output.as_mut_ptr().cast::<[u8; 64]>().add(i + $r).cast());
             }
         }
     }};
@@ -125,8 +125,8 @@ macro_rules! block_mix_dyn {
         <$s0:ty> $input0:expr => $output0:expr,
         <$s1:ty> $input1:expr => $output1:expr$(,)?
     ]) => {{
-        let output0: &mut [Align64<[u8; 64]>] = $output0;
-        let output1: &mut [Align64<[u8; 64]>] = $output1;
+        let output0: &mut [Align64<crate::fixed_r::Block<U1>>] = $output0;
+        let output1: &mut [Align64<crate::fixed_r::Block<U1>>] = $output1;
         debug_assert_eq!(output0.len(), output1.len());
 
         let mut x0: <$s0 as Salsa20>::Block = unsafe { $input0.load($r * 2 - 1) };
@@ -140,8 +140,8 @@ macro_rules! block_mix_dyn {
             b0.write(GenericArray::from_array([&mut x0, &mut x1]));
 
             unsafe {
-                x0.write_to_ptr(output0[i].as_mut_ptr().cast());
-                x1.write_to_ptr(output1[i].as_mut_ptr().cast());
+                x0.write_to_ptr(output0.as_mut_ptr().cast::<[u8; 64]>().add(i).cast());
+                x1.write_to_ptr(output1.as_mut_ptr().cast::<[u8; 64]>().add(i).cast());
             }
 
             x0.xor_with(unsafe { $input0.load(2 * i + 1) });
@@ -151,8 +151,8 @@ macro_rules! block_mix_dyn {
             b0.write(GenericArray::from_array([&mut x0, &mut x1]));
 
             unsafe {
-                x0.write_to_ptr(output0[i + $r].as_mut_ptr().cast());
-                x1.write_to_ptr(output1[i + $r].as_mut_ptr().cast());
+                x0.write_to_ptr(output0.as_mut_ptr().cast::<[u8; 64]>().add(i + $r).cast());
+                x1.write_to_ptr(output1.as_mut_ptr().cast::<[u8; 64]>().add(i + $r).cast());
             }
         }
     }};

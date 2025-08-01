@@ -231,10 +231,6 @@ impl BlockAvx2 {
     #[cfg_attr(not(target_feature = "avx2"), target_feature(enable = "avx2"))]
     fn keystream_impl<const ROUND_PAIRS: usize>(&mut self) {
         unsafe {
-            if ROUND_PAIRS == 0 {
-                return;
-            }
-
             for _ in 0..(ROUND_PAIRS * 2) {
                 quarter_xmmwords!(self.a, self.b, self.c, self.d);
 
@@ -472,10 +468,6 @@ impl BlockAvx2Mb2 {
     #[cfg_attr(not(target_feature = "avx2"), target_feature(enable = "avx2"))]
     fn keystream_impl<const ROUND_PAIRS: usize>(&mut self) {
         unsafe {
-            if ROUND_PAIRS == 0 {
-                return;
-            }
-
             for _ in 0..(ROUND_PAIRS * 2) {
                 quarter_ymmwords!(self.a, self.b, self.c, self.d);
 

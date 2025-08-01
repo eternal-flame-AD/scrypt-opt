@@ -649,7 +649,6 @@ dependencies = [
  "cpufeatures",
  "criterion",
  "generic-array 1.2.0",
- "hmac",
  "libc",
  "num_cpus",
  "pbkdf2",
