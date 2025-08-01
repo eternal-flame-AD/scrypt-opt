@@ -654,7 +654,7 @@ dependencies = [
  "pbkdf2",
  "salsa20",
  "scrypt",
- "scrypt-opt-derive",
+ "scrypt-opt-derive 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "sha2",
  "wasm-bindgen",
  "windows-sys 0.60.2",
@@ -663,6 +663,12 @@ dependencies = [
 [[package]]
 name = "scrypt-opt-derive"
 version = "0.1.0"
+
+[[package]]
+name = "scrypt-opt-derive"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7a5ea9fe124fdc7373ca6809f26616354b249461fbe494dbea5ba9d56abfde37"
 
 [[package]]
 name = "serde"
