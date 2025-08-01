@@ -331,7 +331,6 @@ unsafe extern "C" fn scrypt_ro_mix(
 
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen(js_name = "scrypt")]
-#[cfg_attr(test, mutants::skip)]
 /// WASM bindings for scrypt, it's not really (much) faster on SIMD due to the complete lack of wide SIMD support, just a wrapper for API compatibility.
 pub fn scrypt_wasm(password: &[u8], salt: &[u8], n: u32, r: u32, p: u32, dklen: usize) -> String {
     let log2_n = NonZeroU8::new(n.trailing_zeros() as u8).unwrap();
@@ -346,9 +345,14 @@ pub fn scrypt_wasm(password: &[u8], salt: &[u8], n: u32, r: u32, p: u32, dklen: 
     }
 
     let mut result: Vec<u8> = vec![0; dklen * 2];
-    if !scrypt(password, salt, log2_n, r, p, &mut result[dklen..]) {
+    let Some(r) = NonZeroU32::new(r) else {
         return String::from("Unsupported r value");
-    }
+    };
+    let Some(p) = NonZeroU32::new(p) else {
+        return String::from("Unsupported p value");
+    };
+
+    scrypt(password, salt, log2_n, r, p, &mut result[dklen..]);
     for i in 0..dklen {
         let word = result[dklen + i];
         let high_nibble = (word >> 4) as u8;
