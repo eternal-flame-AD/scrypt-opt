@@ -41,7 +41,7 @@ Compute a single key (uses pipelining if P>1)
 
 ```sh
 echo -n "password" | scrypt-opt compute -s NaCl --cf 10 -r 8 -p 16
-/bq+HJ00cgB4VucZDQHp/nxq18vII3gw53N2Y0s3MWIurzDZLiKjiG/xCSedmDDaxyevuUqD7m2DYMvfoswGQA== 
+$scrypt$ln=10$r=8$p=16$TmFDbA$/bq+HJ00cgB4VucZDQHp/nxq18vII3gw53N2Y0s3MWIurzDZLiKjiG/xCSedmDDaxyevuUqD7m2DYMvfoswGQA
 ```
 
 Solve a 💥PoW! Bot Deterrent style PoW with a target hash of `0002` and output key length of 16 bytes:
