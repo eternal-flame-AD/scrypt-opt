@@ -62,8 +62,8 @@ impl<
     }
 }
 
-/// Brute force a masked test for a given target and nonce generator at a given offset with a compile-time R and a fixed P of 1.
-pub fn test_static<
+/// Brute force the scrypt function for a masked test for a given target and nonce generator at a given offset with a compile-time R and a fixed P of 1.
+fn test_static_p1<
     const OP: u32,
     Q: AsRef<[Align64<crate::fixed_r::Block<R>>]> + AsMut<[Align64<crate::fixed_r::Block<R>>]>,
     R: ArrayLength + NonZero,
@@ -175,7 +175,113 @@ pub fn test_static<
     )
 }
 
-/// Brute force a masked test for a given target and nonce generator at a given offset with a runtime R and P.
+/// Brute force the scrypt function for a masked test for a given target and nonce generator at a given offset with a compile-time R and a runtime P.
+pub fn test_static<
+    const OP: u32,
+    Q: AsRef<[Align64<crate::fixed_r::Block<R>>]> + AsMut<[Align64<crate::fixed_r::Block<R>>]>,
+    R: ArrayLength + NonZero,
+    N: CreatePbkdf2HmacSha256State,
+>(
+    buffer_sets: [&mut crate::fixed_r::BufferSet<Q, R>; 2],
+    p: NonZeroU32,
+    salt: &[u8],
+    mask: NonZeroU64,
+    target: u64,
+    offset: usize,
+    nonce_generator: impl IntoIterator<Item = N>,
+) -> Option<(N, Pbkdf2HmacSha256State)> {
+    match OP {
+        CMP_EQ | CMP_LT | CMP_GT | CMP_LE | CMP_GE => {}
+        _ => panic!("invalid OP: {}", OP),
+    }
+
+    if p.get() == 1 {
+        return test_static_p1::<OP, Q, R, N>(
+            buffer_sets,
+            salt,
+            mask,
+            target,
+            offset,
+            nonce_generator,
+        );
+    }
+
+    let [mut buffer_set0, mut buffer_set1] = buffer_sets;
+
+    let mut nonce_generator = nonce_generator.into_iter();
+
+    let mut current_nonce = nonce_generator.next()?;
+    let mut current_hmac_state = current_nonce.create_pbkdf2_hmac_sha256_state();
+    let mut output_hmac_state = current_hmac_state.clone();
+
+    // prologue of the global pipeline - hydrate the leading buffer set
+    current_hmac_state.emit_scatter(salt, [buffer_set0.input_buffer_mut()]);
+    buffer_set0.ro_mix_front();
+
+    loop {
+        // complete the current chunk except the last RoMixBack to join it with the first RoMixFront of the next chunk
+        for chunk_idx in 1..p.get() {
+            current_hmac_state.emit_scatter_offset(
+                salt,
+                [buffer_set1.input_buffer_mut()],
+                chunk_idx * 4 * R::U32,
+            );
+
+            buffer_set0.ro_mix_interleaved(&mut buffer_set1);
+
+            output_hmac_state.ingest_salt(std::slice::from_ref(buffer_set0.raw_salt_output()));
+
+            (buffer_set0, buffer_set1) = (buffer_set1, buffer_set0);
+        }
+
+        // figure out the next nonce and hmac state
+        let new_state = if let Some(next_nonce) = nonce_generator.next() {
+            let new_hmac_state = next_nonce.create_pbkdf2_hmac_sha256_state();
+            new_hmac_state.emit_scatter(salt, [buffer_set1.input_buffer_mut()]);
+
+            buffer_set0.ro_mix_interleaved(&mut buffer_set1);
+
+            Some((next_nonce, new_hmac_state))
+        } else {
+            buffer_set0.ro_mix_back();
+            None
+        };
+
+        // check the output of the current chunk
+        let mut tmp_output = [0u8; 8];
+
+        output_hmac_state.partial_gather([buffer_set0.raw_salt_output()], offset, &mut tmp_output);
+        let t = u64::from_be_bytes(tmp_output) & mask.get();
+
+        if match OP {
+            CMP_EQ => t == target,
+            CMP_LT => t < target,
+            CMP_GT => t > target,
+            CMP_LE => t <= target,
+            CMP_GE => t >= target,
+            _ => unreachable!(),
+        } {
+            unlikely();
+            output_hmac_state.ingest_salt(std::slice::from_ref(buffer_set0.raw_salt_output()));
+            return Some((current_nonce, output_hmac_state));
+        }
+
+        let Some((next_nonce, new_hmac_state)) = new_state else {
+            return None;
+        };
+
+        // rearrange variables for the next iteration
+        {
+            current_nonce = next_nonce;
+            current_hmac_state = new_hmac_state;
+            output_hmac_state = current_hmac_state.clone();
+
+            (buffer_set0, buffer_set1) = (buffer_set1, buffer_set0);
+        }
+    }
+}
+
+/// Brute force the scrypt function for a masked test for a given target and nonce generator at a given offset with a runtime R and P.
 pub fn test<const OP: u32, N: CreatePbkdf2HmacSha256State>(
     buffer_sets: &mut [Align64<crate::fixed_r::Block<U1>>],
     cf: NonZeroU8,
@@ -220,7 +326,7 @@ pub fn test<const OP: u32, N: CreatePbkdf2HmacSha256State>(
     buffer_set0.ro_mix_front(r, cf);
 
     loop {
-        // complete the current chunk except the last RoMixBack
+        // complete the current chunk except the last RoMixBack to join it with the first RoMixFront of the next chunk
         for chunk_idx in 1..p.get() {
             current_hmac_state.emit_scatter_offset(
                 salt,
@@ -274,6 +380,7 @@ pub fn test<const OP: u32, N: CreatePbkdf2HmacSha256State>(
             (buffer_set0.ro_mix_back(r, cf), None)
         };
 
+        // check the output of the current chunk
         let mut tmp_output = [0u8; 8];
 
         output_hmac_state.partial_gather(
@@ -312,6 +419,7 @@ pub fn test<const OP: u32, N: CreatePbkdf2HmacSha256State>(
             return None;
         };
 
+        // rearrange variables for the next iteration
         {
             current_nonce = next_nonce;
             current_hmac_state = new_hmac_state;
@@ -373,6 +481,7 @@ mod tests {
                         &mut *crate::fixed_r::BufferSet::new_boxed(cf),
                         &mut *crate::fixed_r::BufferSet::new_boxed(cf),
                     ],
+                    NonZeroU32::new(1).unwrap(),
                     &[0x29, 0x39, 0x66, 0x3c, 0x6f, 0x46, 0x15, 0xc3],
                     NonZeroU64::new(target_mask).unwrap(),
                     target_u64,
@@ -482,7 +591,7 @@ mod tests {
     }
 
     fn test_pow_consistency<R: ArrayLength + NonZero>() {
-        for target in ["03", "005", "0030"] {
+        for target in ["03", "007", "0070"] {
             let cf = NonZeroU8::new(3).unwrap();
 
             let mut target_u64 = 0u64;
@@ -511,36 +620,39 @@ mod tests {
                 Align64::<crate::fixed_r::Block<U1>>::default();
                 2 * R::USIZE * 1 as usize * ((1 << cf.get()) + 2)
             ];
-            let static_result = test_static::<CMP_LE, _, R, _>(
-                [
-                    &mut *crate::fixed_r::BufferSet::new_boxed(cf),
-                    &mut *crate::fixed_r::BufferSet::new_boxed(cf),
-                ],
-                &[0x29, 0x39, 0x66, 0x3c, 0x6f, 0x46, 0x15, 0xc3],
-                NonZeroU64::new(target_mask).unwrap(),
-                target_u64,
-                28 / 2,
-                0..expected_iterations * 100,
-            );
+            for p in 1..=3 {
+                let static_result = test_static::<CMP_LE, _, R, _>(
+                    [
+                        &mut *crate::fixed_r::BufferSet::new_boxed(cf),
+                        &mut *crate::fixed_r::BufferSet::new_boxed(cf),
+                    ],
+                    NonZeroU32::new(p).unwrap(),
+                    &[0x29, 0x39, 0x66, 0x3c, 0x6f, 0x46, 0x15, 0xc3],
+                    NonZeroU64::new(target_mask).unwrap(),
+                    target_u64,
+                    28 / 2,
+                    0..expected_iterations * 100,
+                );
 
-            let dynamic_result = test::<CMP_LE, _>(
-                &mut buffer_sets,
-                cf,
-                R::U32.try_into().unwrap(),
-                1.try_into().unwrap(),
-                &[0x29, 0x39, 0x66, 0x3c, 0x6f, 0x46, 0x15, 0xc3],
-                NonZeroU64::new(target_mask).unwrap(),
-                target_u64,
-                28 / 2,
-                0..expected_iterations * 100,
-            );
+                let dynamic_result = test::<CMP_LE, _>(
+                    &mut buffer_sets,
+                    cf,
+                    R::U32.try_into().unwrap(),
+                    p.try_into().unwrap(),
+                    &[0x29, 0x39, 0x66, 0x3c, 0x6f, 0x46, 0x15, 0xc3],
+                    NonZeroU64::new(target_mask).unwrap(),
+                    target_u64,
+                    28 / 2,
+                    0..expected_iterations * 100,
+                );
 
-            let (nonce_static, hmac_state_static) = static_result.unwrap();
+                let (nonce_static, hmac_state_static) = static_result.unwrap();
 
-            let (nonce_dynamic, hmac_state_dynamic) = dynamic_result.unwrap();
+                let (nonce_dynamic, hmac_state_dynamic) = dynamic_result.unwrap();
 
-            assert_eq!(nonce_static, nonce_dynamic);
-            assert_eq!(hmac_state_static, hmac_state_dynamic);
+                assert_eq!(nonce_static, nonce_dynamic);
+                assert_eq!(hmac_state_static, hmac_state_dynamic);
+            }
         }
     }
 

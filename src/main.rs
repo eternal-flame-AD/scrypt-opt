@@ -351,45 +351,42 @@ fn pow<const OP: u32>(
                             true
                         });
 
-                    let result = if p.get() == 1 {
-                        match_r!(r.get(), R, {
-                            // if P=1 and R is small, try a static pipeline
-                            let (buffer0_inner, buffer1_inner) = local_buffer.as_mut()
-                                [..required_blocks * r.get() as usize * 2]
-                                .split_at_mut(required_blocks * r.get() as usize);
+                    let result = match_r!(r.get(), R, {
+                        // if P=1 and R is small, try a static pipeline
+                        let (buffer0_inner, buffer1_inner) = local_buffer.as_mut()
+                            [..required_blocks * r.get() as usize * 2]
+                            .split_at_mut(required_blocks * r.get() as usize);
 
-                            let mut buffer0 = scrypt_opt::fixed_r::BufferSet::<
-                                &mut [Align64<scrypt_opt::fixed_r::Block<R>>],
-                                R,
-                            >::new(unsafe {
-                                core::slice::from_raw_parts_mut(
-                                    buffer0_inner.as_mut_ptr().cast(),
-                                    buffer1_inner.len() / r.get() as usize,
-                                )
-                            });
-
-                            let mut buffer1 = scrypt_opt::fixed_r::BufferSet::<
-                                &mut [Align64<scrypt_opt::fixed_r::Block<R>>],
-                                R,
-                            >::new(unsafe {
-                                core::slice::from_raw_parts_mut(
-                                    buffer1_inner.as_mut_ptr().cast(),
-                                    buffer1_inner.len() / r.get() as usize,
-                                )
-                            });
-
-                            scrypt_opt::pipeline::test_static::<OP, _, R, _>(
-                                [&mut buffer0, &mut buffer1],
-                                salt,
-                                mask,
-                                target,
-                                offset,
-                                &mut nonce_generator,
+                        let mut buffer0 = scrypt_opt::fixed_r::BufferSet::<
+                            &mut [Align64<scrypt_opt::fixed_r::Block<R>>],
+                            R,
+                        >::new(unsafe {
+                            core::slice::from_raw_parts_mut(
+                                buffer0_inner.as_mut_ptr().cast(),
+                                buffer1_inner.len() / r.get() as usize,
                             )
-                        })
-                    } else {
-                        None
-                    }
+                        });
+
+                        let mut buffer1 = scrypt_opt::fixed_r::BufferSet::<
+                            &mut [Align64<scrypt_opt::fixed_r::Block<R>>],
+                            R,
+                        >::new(unsafe {
+                            core::slice::from_raw_parts_mut(
+                                buffer1_inner.as_mut_ptr().cast(),
+                                buffer1_inner.len() / r.get() as usize,
+                            )
+                        });
+
+                        scrypt_opt::pipeline::test_static::<OP, _, R, _>(
+                            [&mut buffer0, &mut buffer1],
+                            p,
+                            salt,
+                            mask,
+                            target,
+                            offset,
+                            &mut nonce_generator,
+                        )
+                    })
                     .unwrap_or_else(|| {
                         // otherwise, use the dynamic pipeline
                         scrypt_opt::pipeline::test::<OP, _>(
