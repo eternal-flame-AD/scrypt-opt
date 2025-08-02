@@ -7,12 +7,11 @@ use clap::Parser;
 use generic_array::{
     ArrayLength,
     typenum::{
-        B0, B1, Bit, NonZero, U1, U2, U3, U4, U5, U6, U7, U8, U9, U10, U11, U12, U13, U14, U15,
-        U16, U17, U18, U19, U20, U21, U22, U23, U24, U25, U26, U27, U28, U29, U30, U31, U32,
+        B0, B1, Bit, NonZero, U1, U2, U3, U4, U5, U6, U7, U8, U9, U10, U11, U12, U13, U14, U15, U16,
     },
 };
 use scrypt_opt::{
-    fixed_r::BufferSet,
+    RoMix,
     memory::Align64,
     pbkdf2_1::Pbkdf2HmacSha256State,
     pipeline::PipelineContext,
@@ -56,23 +55,21 @@ macro_rules! match_r {
             14 => { type $b = U14; Some($c) },
             15 => { type $b = U15; Some($c) },
             16 => { type $b = U16; Some($c) },
-            17 => { type $b = U17; Some($c) },
-            18 => { type $b = U18; Some($c) },
-            19 => { type $b = U19; Some($c) },
-            20 => { type $b = U20; Some($c) },
-            21 => { type $b = U21; Some($c) },
-            22 => { type $b = U22; Some($c) },
-            23 => { type $b = U23; Some($c) },
-            24 => { type $b = U24; Some($c) },
-            25 => { type $b = U25; Some($c) },
-            26 => { type $b = U26; Some($c) },
-            27 => { type $b = U27; Some($c) },
-            28 => { type $b = U28; Some($c) },
-            29 => { type $b = U29; Some($c) },
-            30 => { type $b = U30; Some($c) },
-            31 => { type $b = U31; Some($c) },
-            32 => { type $b = U32; Some($c) },
             _ => None,
+        }
+    };
+}
+
+#[rustfmt::skip]
+macro_rules! match_op {
+    ($op:expr, $b:ident, $c:block) => {
+        match $op {
+            "LT" | "lt" => { const $b: u32 = scrypt_opt::pipeline::CMP_LT; $c },
+            "GT" | "gt" => { const $b: u32 = scrypt_opt::pipeline::CMP_GT; $c },
+            "LE" | "le" => { const $b: u32 = scrypt_opt::pipeline::CMP_LE; $c },
+            "GE" | "ge" => { const $b: u32 = scrypt_opt::pipeline::CMP_GE; $c },
+            "EQ" | "eq" => { const $b: u32 = scrypt_opt::pipeline::CMP_EQ; $c },
+            _ => panic!("invalid op: {}", $op),
         }
     };
 }
@@ -104,15 +101,23 @@ enum Command {
         #[arg(short, long, default_value = "14")]
         cf: NonZeroU8,
         #[arg(short, long, default_value = "8")]
-        r: usize,
+        r: NonZeroU32,
         #[arg(short, long)]
         no_pipeline: bool,
     },
     Pow {
+        #[arg(
+            long,
+            default_value = "LE",
+            help = "Comparison operator (LE/GE/EQ/LT/GT)"
+        )]
+        op: String,
         #[arg(short, long, default_value = "14", help = "N value (log2)")]
         cf: NonZeroU8,
         #[arg(short, long, default_value = "8", help = "R value")]
-        r: usize,
+        r: NonZeroU32,
+        #[arg(short, long, default_value = "1", help = "P value")]
+        p: NonZeroU32,
         #[arg(long, default_value = "8", help = "length of nonce in bytes")]
         nonce_len: usize,
         #[arg(
@@ -274,9 +279,11 @@ struct PowResult {
     elapsed: std::time::Duration,
 }
 
-fn pow<R: ArrayLength + NonZero + Send + Sync>(
-    salt: Box<[u8]>,
+fn pow<const OP: u32>(
+    salt: &[u8],
     cf: NonZeroU8,
+    r: NonZeroU32,
+    p: NonZeroU32,
     mask: NonZeroU64,
     target: u64,
     num_threads: NonZeroU32,
@@ -291,8 +298,6 @@ fn pow<R: ArrayLength + NonZero + Send + Sync>(
         Pbkdf2HmacSha256State::MAX_SHORT_PASSWORD_LEN
     );
 
-    const NOT_A_SOLUTION: u64 = u64::MAX;
-
     let required_blocks = scrypt_opt::fixed_r::minimum_blocks(cf);
 
     let search_max = if nonce_len == 8 {
@@ -301,30 +306,15 @@ fn pow<R: ArrayLength + NonZero + Send + Sync>(
         (1 << (nonce_len * 8)) - 1
     };
 
-    struct State<R: ArrayLength + NonZero + Send + Sync> {
-        salt: Box<[u8]>,
-        mask: NonZeroU64,
-        target: u64,
-        offset: usize,
-        stop_signal: AtomicBool,
-        retired_count: AtomicU64,
-        solved_mutex: Mutex<(Box<[u8]>, u64)>,
-        _marker: PhantomData<R>,
-    }
-    let mut full_slice = MultiThreadedHugeSlice::<Align64<scrypt_opt::fixed_r::Block<R>>>::new(
-        required_blocks * 2,
+    let mut full_slice = MultiThreadedHugeSlice::<Align64<scrypt_opt::fixed_r::Block<U1>>>::new(
+        required_blocks * 2 * r.get() as usize,
         num_threads,
     );
-    let state = State::<R> {
-        salt,
-        mask,
-        target,
-        offset,
-        stop_signal: AtomicBool::new(false),
-        retired_count: AtomicU64::new(0),
-        solved_mutex: Mutex::new((vec![0u8; output_len].into_boxed_slice(), NOT_A_SOLUTION)),
-        _marker: PhantomData,
-    };
+
+    let stop_signal = AtomicBool::new(false);
+    let found_nonce = AtomicU64::new(0);
+    let retired_count = AtomicU64::new(0);
+    let output = Mutex::new(vec![0u8; output_len].into_boxed_slice());
 
     let start_time = std::time::Instant::now();
     std::thread::scope(|s| {
@@ -334,8 +324,10 @@ fn pow<R: ArrayLength + NonZero + Send + Sync>(
         for (thread_idx, mut local_buffer) in full_slice.get().into_iter().enumerate() {
             #[cfg(feature = "core_affinity")]
             let core = core_assigner.next();
-
-            let state = &state;
+            let output = &output;
+            let retired_count = &retired_count;
+            let stop_signal = &stop_signal;
+            let found_nonce = &found_nonce;
 
             std::thread::Builder::new()
                 .name(format!("pow-worker-{}", thread_idx))
@@ -349,132 +341,91 @@ fn pow<R: ArrayLength + NonZero + Send + Sync>(
                         eprintln!("No core affinity available for thread {}", thread_idx);
                     }
 
-                    // pad front and back 8 bytes to ensure all possible reads are aligned
-                    // the lowest possible output length is 0, which gives an offset of -8, which needs to be in bounds
-                    let mut local_output = vec![0u8; output_len].into_boxed_slice();
-
-                    let (buffer0_inner, buffer1_inner) =
-                        local_buffer.as_mut().split_at_mut(required_blocks);
-
-                    let mut buffers0 = scrypt_opt::fixed_r::BufferSet::<
-                        &mut [Align64<scrypt_opt::fixed_r::Block<R>>],
-                        R,
-                    >::new(buffer0_inner);
-
-                    let mut buffers1 = scrypt_opt::fixed_r::BufferSet::<
-                        &mut [Align64<scrypt_opt::fixed_r::Block<R>>],
-                        R,
-                    >::new(buffer1_inner);
-
-                    struct NonceState<R: ArrayLength + NonZero + Send + Sync> {
-                        nonce: u64,
-                        hmac_state: Pbkdf2HmacSha256State,
-                        _marker: PhantomData<R>,
-                    }
-
-                    impl<'a, 'b, R: ArrayLength + NonZero + Send + Sync>
-                        PipelineContext<
-                            (&'a State<R>, &'b mut [u8]),
-                            &mut [Align64<scrypt_opt::fixed_r::Block<R>>],
-                            R,
-                            u64,
-                        > for NonceState<R>
-                    {
-                        #[inline(always)]
-                        fn begin(
-                            &mut self,
-                            (pipeline_state, _): &mut (&'a State<R>, &'b mut [u8]),
-                            buffer_set: &mut BufferSet<
-                                &mut [Align64<scrypt_opt::fixed_r::Block<R>>],
-                                R,
-                            >,
-                        ) {
-                            buffer_set.set_input(&self.hmac_state, &pipeline_state.salt);
-                        }
-
-                        #[inline(always)]
-                        fn drain(
-                            self,
-                            (pipeline_state, local_output): &mut (&'a State<R>, &'b mut [u8]),
-                            buffer_set: &mut scrypt_opt::fixed_r::BufferSet<
-                                &mut [Align64<scrypt_opt::fixed_r::Block<R>>],
-                                R,
-                            >,
-                        ) -> Option<u64> {
-                            let mut output = [0u8; 8];
-                            self.hmac_state.partial_gather(
-                                [buffer_set.raw_salt_output()],
-                                pipeline_state.offset,
-                                &mut output,
-                            );
-
-                            let t = u64::from_be_bytes(output) & pipeline_state.mask.get();
-
-                            pipeline_state
-                                .retired_count
-                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-
-                            let succeeded = t <= pipeline_state.target;
-                            if succeeded {
-                                buffer_set.extract_output(&self.hmac_state, local_output);
-                                return Some(self.nonce);
+                    let mut nonce_generator = ((thread_idx as u64)..=search_max)
+                        .step_by(num_threads.get() as usize)
+                        .take_while(|_| {
+                            if stop_signal.load(std::sync::atomic::Ordering::Relaxed) {
+                                return false;
                             }
+                            retired_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            true
+                        });
 
-                            None
-                        }
+                    let result = if p.get() == 1 {
+                        match_r!(r.get(), R, {
+                            // if P=1 and R is small, try a static pipeline
+                            let (buffer0_inner, buffer1_inner) = local_buffer.as_mut()
+                                [..required_blocks * r.get() as usize * 2]
+                                .split_at_mut(required_blocks * r.get() as usize);
+
+                            let mut buffer0 = scrypt_opt::fixed_r::BufferSet::<
+                                &mut [Align64<scrypt_opt::fixed_r::Block<R>>],
+                                R,
+                            >::new(unsafe {
+                                core::slice::from_raw_parts_mut(
+                                    buffer0_inner.as_mut_ptr().cast(),
+                                    buffer1_inner.len() / r.get() as usize,
+                                )
+                            });
+
+                            let mut buffer1 = scrypt_opt::fixed_r::BufferSet::<
+                                &mut [Align64<scrypt_opt::fixed_r::Block<R>>],
+                                R,
+                            >::new(unsafe {
+                                core::slice::from_raw_parts_mut(
+                                    buffer1_inner.as_mut_ptr().cast(),
+                                    buffer1_inner.len() / r.get() as usize,
+                                )
+                            });
+
+                            scrypt_opt::pipeline::test_static::<OP, _, R, _>(
+                                [&mut buffer0, &mut buffer1],
+                                salt,
+                                mask,
+                                target,
+                                offset,
+                                &mut nonce_generator,
+                            )
+                        })
+                    } else {
+                        None
                     }
+                    .unwrap_or_else(|| {
+                        // otherwise, use the dynamic pipeline
+                        scrypt_opt::pipeline::test::<OP, _>(
+                            local_buffer.as_mut(),
+                            cf,
+                            r,
+                            p,
+                            salt,
+                            mask,
+                            target,
+                            offset,
+                            &mut nonce_generator,
+                        )
+                    });
 
-                    let result = buffers0.pipeline(
-                        &mut buffers1,
-                        ((thread_idx as u64)..=search_max)
-                            .step_by(num_threads.get() as usize)
-                            .map_while(|i| {
-                                if state.stop_signal.load(std::sync::atomic::Ordering::Relaxed) {
-                                    return None;
-                                }
-
-                                Some(NonceState::<R> {
-                                    nonce: i,
-                                    // SAFETY: i.to_le_bytes() is way less than 1 SHA-256 block, so we can safely unwrap without checking
-                                    hmac_state: unsafe {
-                                        // we do not need to [..nonce_len] because HMAC(short_key) = HMAC(short_key || 0)
-                                        Pbkdf2HmacSha256State::new_short(&i.to_le_bytes())
-                                            .unwrap_unchecked()
-                                    },
-                                    _marker: PhantomData,
-                                })
-                            }),
-                        &mut (&state, &mut local_output),
-                    );
-
-                    if let Some(nonce) = result {
-                        // if the solution is real we definitely can stop the search
-                        // so signal ASAP
-                        state
-                            .stop_signal
-                            .store(true, std::sync::atomic::Ordering::Release);
-
-                        // synchronize and pick our answer if no one else has gotten to this point yet
-                        let mut solution = state.solved_mutex.lock().unwrap();
-                        if solution.1 == NOT_A_SOLUTION {
-                            solution.0.copy_from_slice(&local_output);
-                            solution.1 = nonce;
-                        }
+                    if let Some((nonce, hmac_state)) = result {
+                        stop_signal.store(true, std::sync::atomic::Ordering::Relaxed);
+                        let mut output = output.lock().unwrap();
+                        hmac_state.emit(&mut output);
+                        found_nonce.store(nonce, std::sync::atomic::Ordering::Relaxed);
                     }
                 })
                 .expect("failed to spawn thread");
         }
     });
 
-    let lock = Mutex::into_inner(state.solved_mutex).expect("some solver panicked");
-    let retired_count = state
-        .retired_count
-        .load(std::sync::atomic::Ordering::Relaxed);
+    if !stop_signal.load(std::sync::atomic::Ordering::Relaxed) {
+        return None;
+    }
+
+    let output = Mutex::into_inner(output).unwrap();
 
     Some(PowResult {
-        nonce: lock.1,
-        output: lock.0,
-        actual_iterations: retired_count,
+        nonce: found_nonce.load(std::sync::atomic::Ordering::Relaxed),
+        output,
+        actual_iterations: retired_count.load(std::sync::atomic::Ordering::Relaxed) - 1,
         elapsed: start_time.elapsed(),
     })
 }
@@ -658,6 +609,110 @@ fn throughput<Pipeline: Bit, R: ArrayLength + NonZero>(
     });
 }
 
+fn throughput_dyn<Pipeline: Bit>(
+    num_threads: NonZeroU32,
+    cf: NonZeroU8,
+    r: NonZeroU32,
+    #[cfg(feature = "core_affinity")] core_stride: NonZeroUsize,
+) {
+    let counter = AtomicU64::new(0);
+
+    let required_blocks = scrypt_opt::fixed_r::minimum_blocks(cf);
+
+    let mut full_slice = MultiThreadedHugeSlice::<Align64<scrypt_opt::fixed_r::Block<U1>>>::new(
+        required_blocks * r.get() as usize * (if Pipeline::BOOL { 2 } else { 1 }),
+        num_threads,
+    );
+
+    #[cfg(feature = "core_affinity")]
+    let mut core_assigner = CoreAffinityAssigner::new(core_stride);
+
+    std::thread::scope(|s| {
+        for (thread_idx, mut local_buffer) in full_slice.get().into_iter().enumerate() {
+            #[cfg(feature = "core_affinity")]
+            let core = core_assigner.next();
+
+            let counter = &counter;
+
+            std::thread::Builder::new()
+                .name(format!("throughput-worker-{}", thread_idx))
+                .spawn_scoped(s, move || {
+                    #[cfg(feature = "core_affinity")]
+                    if let Some(core) = core {
+                        if !core_affinity::set_for_current(core) {
+                            eprintln!("Failed to set core affinity for thread {}", thread_idx);
+                        }
+                    }
+
+                    let (mut buffer0, mut buffer1) = local_buffer
+                        .as_mut()
+                        .split_at_mut(required_blocks * r.get() as usize);
+
+                    for _ in 0.. {
+                        let hmac_state = Pbkdf2HmacSha256State::new(&0u64.to_le_bytes());
+                        let mut output_hmac_state = hmac_state.clone();
+                        hmac_state.emit_scatter(
+                            KAT_SALT,
+                            buffer0
+                                .ro_mix_input_buffer(r)
+                                .chunks_exact_mut(core::mem::size_of::<
+                                    Align64<scrypt_opt::fixed_r::Block<U1>>,
+                                >())
+                                .map(|chunk| unsafe {
+                                    chunk
+                                        .as_mut_ptr()
+                                        .cast::<Align64<scrypt_opt::fixed_r::Block<U1>>>()
+                                        .as_mut()
+                                        .unwrap()
+                                }),
+                        );
+
+                        let salt = if Pipeline::BOOL {
+                            buffer0.ro_mix_interleaved(&mut buffer1, r, cf)
+                        } else {
+                            buffer0.ro_mix_front(r, cf);
+                            buffer0.ro_mix_back(r, cf)
+                        };
+
+                        output_hmac_state.ingest_salt(unsafe {
+                            core::slice::from_raw_parts(
+                                salt.as_ptr()
+                                    .cast::<Align64<scrypt_opt::fixed_r::Block<U1>>>(),
+                                salt.len()
+                                    / core::mem::size_of::<Align64<scrypt_opt::fixed_r::Block<U1>>>(
+                                    ),
+                            )
+                        });
+
+                        counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+                        core::hint::black_box(output_hmac_state);
+
+                        if Pipeline::BOOL {
+                            (buffer0, buffer1) = (buffer1, buffer0);
+                        }
+                    }
+                })
+                .expect("failed to spawn thread");
+        }
+
+        println!(
+            "Started {} threads (N={}, R={}, P=1)",
+            num_threads,
+            1u64 << cf.get(),
+            r,
+        );
+
+        let mut prev = counter.load(std::sync::atomic::Ordering::Relaxed);
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(1000));
+            let cur = counter.load(std::sync::atomic::Ordering::Relaxed);
+            println!("Thrpt: {} c/s (total: {})", cur - prev, cur);
+            prev = cur;
+        }
+    });
+}
+
 fn main() {
     let args = Args::parse();
 
@@ -736,7 +791,7 @@ fn main() {
             }
             stdout.flush().unwrap();
         }
-        Command::Throughput { cf, r, no_pipeline } => match_r!(r, R, {
+        Command::Throughput { cf, r, no_pipeline } => match_r!(r.get(), R, {
             if no_pipeline {
                 throughput::<B0, R>(
                     num_threads,
@@ -753,10 +808,30 @@ fn main() {
                 )
             }
         })
-        .expect("invalid/unsupported r value"),
+        .unwrap_or_else(|| {
+            if no_pipeline {
+                throughput_dyn::<B0>(
+                    num_threads,
+                    cf,
+                    r,
+                    #[cfg(feature = "core_affinity")]
+                    core_stride,
+                )
+            } else {
+                throughput_dyn::<B1>(
+                    num_threads,
+                    cf,
+                    r,
+                    #[cfg(feature = "core_affinity")]
+                    core_stride,
+                )
+            }
+        }),
         Command::Pow {
+            op,
             cf,
             r,
+            p,
             nonce_len,
             output_len,
             salt,
@@ -797,6 +872,27 @@ fn main() {
                 }
             }
 
+            let estimated_cs = match op.as_str() {
+                "EQ" | "eq" => 2u64.pow(target_mask.count_ones()),
+                "GT" | "gt" => {
+                    assert_ne!(
+                        target_u64, 0,
+                        "target must be non-zero for strict greater than"
+                    );
+                    target_mask.div_ceil(target_mask - target_u64)
+                }
+                "LT" | "lt" => {
+                    assert_ne!(
+                        target_u64, 0,
+                        "target must be non-zero for strict less than"
+                    );
+                    target_mask.div_ceil(target_u64)
+                }
+                "LE" | "le" => target_mask.div_ceil(target_u64 + 1),
+                "GE" | "ge" => target_mask.div_ceil((target_mask - target_u64) + 1),
+                _ => panic!("invalid op: {}, expected one of: EQ/GT/LT/LE/GE", op),
+            };
+
             target_u64 <<= (16 - target.len()) * 4;
             target_mask <<= (16 - target.len()) * 4;
 
@@ -823,7 +919,6 @@ fn main() {
                 .or_else(|_| GeneralPurpose::new(&base64::alphabet::STANDARD, config).decode(salt))
                 .expect("invalid salt, should be base64 encoded");
 
-            let estimated_cs = target_mask.get().div_ceil(target_u64 + 1) / 2;
             if !quiet {
                 eprintln!(
                     "spawning {} threads for an estimated iteration count of {}",
@@ -831,10 +926,12 @@ fn main() {
                 );
             }
             eprintln!("Nonce\tResult\tN\tR\tEstimatedCands\tRealCands\tLuck%\tCPS");
-            let Some(output) = match_r!(r, R, {
-                pow::<R>(
-                    salt_decoded.into_boxed_slice(),
+            let output = match_op!(op.as_str(), OP, {
+                pow::<OP>(
+                    &salt_decoded,
                     cf,
+                    r,
+                    p,
                     target_mask,
                     target_u64,
                     num_threads,
@@ -845,9 +942,7 @@ fn main() {
                     core_stride,
                 )
             })
-            .expect("invalid/unsupported r value") else {
-                panic!("no solution found");
-            };
+            .expect("no solution found");
 
             let mut stdout = std::io::stdout();
             let mut output_nonce = [0u8; Pbkdf2HmacSha256State::MAX_SHORT_PASSWORD_LEN];
