@@ -79,6 +79,8 @@ The [`RoMix`] trait is the main entry point for the kernel. The [`RoMix::ro_mix_
 
 The [`compat`] module provides a C, WASM and Rust APIs that are push-button compatible with off the shelf libraries.
 
+The [`pipeline`] module provides high throughput generic masked test APIs for PoW and password cracking workloads, for example see [main.rs](src/main.rs) for a 150-line multi-threaded PoW implementation that handles arbitrary $R$, $P$ and $N$ values.
+
 The [`fixed_r`] module allows you to compile an optimized kernel for a specific $R$ value, with more rich APIs available:
 
 - `Block<R>` represents a salsa20 (512-bit) block in u8 form.

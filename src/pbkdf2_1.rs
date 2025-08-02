@@ -1,6 +1,6 @@
 use generic_array::{
     ArrayLength, GenericArray,
-    typenum::{IsLess, NonZero, U32, Unsigned},
+    typenum::{IsLess, NonZero, U1, U32, Unsigned},
 };
 use sha2::{
     Digest, digest::crypto_common, digest::generic_array as rc_generic_array,
@@ -98,13 +98,16 @@ impl SoftSha256 {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(align(64))]
 /// A cheaply copyable HMAC-SHA256 state for PBKDF2-HMAC-SHA256, optimized for scrypt workloads
 pub struct Pbkdf2HmacSha256State {
-    inner_digest_words: [u32; 8],
-    outer_digest_words: [u32; 8],
-    previous_blocks: u64,
+    /// The value of H(K ^ IPAD || 0)
+    pub inner_digest_words: [u32; 8],
+    /// The value of H(K ^ OPAD || 0)
+    pub outer_digest_words: [u32; 8],
+    /// The number of blocks processed by [`Pbkdf2HmacSha256State::ingest_salt`]
+    pub previous_blocks: u64,
 }
 
 impl Pbkdf2HmacSha256State {
@@ -277,6 +280,12 @@ impl Pbkdf2HmacSha256State {
 
         sha2::compress256(&mut self.inner_digest_words, blocks);
         self.previous_blocks += Mul2::<R>::U64 * salt.len() as u64;
+    }
+
+    #[inline(always)]
+    /// Emit the HMAC-SHA256 output using the current state
+    pub fn emit(&self, output: &mut [u8]) {
+        self.emit_gather::<U1, &Align64<Block<U1>>>([], output);
     }
 
     #[inline(always)]
@@ -475,6 +484,68 @@ impl Pbkdf2HmacSha256State {
                 }
             }
         }
+    }
+}
+
+/// A trait for creating a [`Pbkdf2HmacSha256State`] from a type
+pub trait CreatePbkdf2HmacSha256State {
+    /// Create a [`Pbkdf2HmacSha256State`] from the type
+    fn create_pbkdf2_hmac_sha256_state(&self) -> Pbkdf2HmacSha256State;
+}
+
+macro_rules! impl_create_pbkdf2_hmac_sha256_state_for_uint {
+    ($($t:ty),*) => {
+        $(
+            impl CreatePbkdf2HmacSha256State for $t {
+                #[inline(always)]
+                fn create_pbkdf2_hmac_sha256_state(&self) -> Pbkdf2HmacSha256State {
+                    unsafe { Pbkdf2HmacSha256State::new_short(&self.to_le_bytes()).unwrap_unchecked() }
+                }
+            }
+            impl CreatePbkdf2HmacSha256State for & $t {
+                #[inline(always)]
+                fn create_pbkdf2_hmac_sha256_state(&self) -> Pbkdf2HmacSha256State {
+                    unsafe { Pbkdf2HmacSha256State::new_short(&self.to_le_bytes()).unwrap_unchecked() }
+                }
+            }
+        )*
+    };
+}
+
+impl_create_pbkdf2_hmac_sha256_state_for_uint!(u8, u16, u32, u64, u128);
+
+impl CreatePbkdf2HmacSha256State for String {
+    #[inline(always)]
+    fn create_pbkdf2_hmac_sha256_state(&self) -> Pbkdf2HmacSha256State {
+        Pbkdf2HmacSha256State::new(self.as_bytes())
+    }
+}
+
+impl CreatePbkdf2HmacSha256State for &String {
+    #[inline(always)]
+    fn create_pbkdf2_hmac_sha256_state(&self) -> Pbkdf2HmacSha256State {
+        Pbkdf2HmacSha256State::new(self.as_bytes())
+    }
+}
+
+impl CreatePbkdf2HmacSha256State for &str {
+    #[inline(always)]
+    fn create_pbkdf2_hmac_sha256_state(&self) -> Pbkdf2HmacSha256State {
+        Pbkdf2HmacSha256State::new(self.as_bytes())
+    }
+}
+
+impl CreatePbkdf2HmacSha256State for Box<[u8]> {
+    #[inline(always)]
+    fn create_pbkdf2_hmac_sha256_state(&self) -> Pbkdf2HmacSha256State {
+        Pbkdf2HmacSha256State::new(&self)
+    }
+}
+
+impl CreatePbkdf2HmacSha256State for &[u8] {
+    #[inline(always)]
+    fn create_pbkdf2_hmac_sha256_state(&self) -> Pbkdf2HmacSha256State {
+        Pbkdf2HmacSha256State::new(self)
     }
 }
 
