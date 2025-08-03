@@ -45,7 +45,7 @@ Compute a single key (uses pipelining if P>1)
 
 ```sh
 echo -n "password" | scrypt-opt compute -s NaCl --cf 10 -r 8 -p 16
-$scrypt$ln=10$r=8$p=16$TmFDbA$/bq+HJ00cgB4VucZDQHp/nxq18vII3gw53N2Y0s3MWIurzDZLiKjiG/xCSedmDDaxyevuUqD7m2DYMvfoswGQA
+$scrypt$ln=10,r=8,p=16$TmFDbA$/bq+HJ00cgB4VucZDQHp/nxq18vII3gw53N2Y0s3MWIurzDZLiKjiG/xCSedmDDaxyevuUqD7m2DYMvfoswGQA
 ```
 
 Solve a 💥PoW! Bot Deterrent style PoW with a target hash of `0002` and output key length of 16 bytes:
@@ -57,6 +57,14 @@ Offset is calculated as the number of output nibbles minus the number of target 
 spawning 16 threads for an estimated iteration count of 10922
 Nonce   Result  N       R       EstimatedCands  RealCands       Luck%   RealCPS
 cf40000000000000        08402d18d2ba3be9ee4b620f8a840000        16384   8       10922    16975   21.13   1310.7
+```
+
+Key recovery:
+
+```sh
+> scrypt-opt --num-threads 16 search --target '$scrypt$ln=16,r=8,p=1$U29kaXVtQ2hsb3JpZGU$ihwC9g9lHEbkvEqR3ENOZ1fwo+A9mt8mrRmWT+JGH7I/REg1qlmRcWfFny1pjCWxsgf5qdSdW19y10F/VQtE2A' rockyou.txt
+
+$scrypt$ln=16,r=8,p=1$U29kaXVtQ2hsb3JpZGU$ihwC9g9lHEbkvEqR3ENOZ1fwo+A9mt8mrRmWT+JGH7I/REg1qlmRcWfFny1pjCWxsgf5qdSdW19y10F/VQtE2A:letme1n (46009 cands, 302.73 c/s)
 ```
 
 Spin loop and print throughput:
