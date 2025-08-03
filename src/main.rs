@@ -4,16 +4,18 @@ use base64::{
     write::EncoderWriter,
 };
 use clap::Parser;
+use crossbeam_utils::CachePadded;
 use generic_array::{
     ArrayLength,
     typenum::{
         B0, B1, Bit, NonZero, U1, U2, U3, U4, U5, U6, U7, U8, U9, U10, U11, U12, U13, U14, U15, U16,
     },
 };
+use password_hash::Ident;
 use scrypt_opt::{
     RoMix,
     memory::Align64,
-    pbkdf2_1::Pbkdf2HmacSha256State,
+    pbkdf2_1::{CreatePbkdf2HmacSha256State, Pbkdf2HmacSha256State},
     pipeline::PipelineContext,
     self_test::{
         Case, CaseN16R1P1, CaseN1024R1P2, CaseN1024R8P16, CaseN1024R53P1, CaseN1024R53P3,
@@ -24,13 +26,13 @@ use scrypt_opt::{
 #[cfg(feature = "core_affinity")]
 use std::num::NonZeroUsize;
 
-use std::ops::DerefMut;
 use std::{
-    io::{Read, Write},
+    io::{BufRead, BufReader, Read, Write},
     marker::PhantomData,
     num::{NonZeroU8, NonZeroU32, NonZeroU64},
+    ops::DerefMut,
     sync::{
-        Mutex,
+        Arc, Mutex,
         atomic::{AtomicBool, AtomicU64},
     },
 };
@@ -39,7 +41,7 @@ use std::{
 macro_rules! match_r {
     ($r:expr, $b:ident, $c:block) => {
         match $r {
-            1 => { type $b = U1; Some($c) },
+            1 => { type $b = U1; Some($c) },    
             2 => { type $b = U2; Some($c) },
             3 => { type $b = U3; Some($c) },
             4 => { type $b = U4; Some($c) },
@@ -105,6 +107,16 @@ enum Command {
         #[arg(short, long)]
         no_pipeline: bool,
     },
+    Search {
+        #[arg(long, help = "target hash in PHC format")]
+        target: String,
+
+        #[arg(long)]
+        progress: bool,
+
+        #[arg(default_value = "-")]
+        file: String,
+    },
     Pow {
         #[arg(
             long,
@@ -154,6 +166,25 @@ struct Args {
     core_stride: NonZeroUsize,
     #[command(subcommand)]
     command: Command,
+}
+
+#[cold]
+fn unlikely() {}
+
+#[derive(Clone, Copy, Debug)]
+struct Key(CachePadded<[u8; 256]>);
+
+impl Key {
+    fn key_bytes(&self) -> &[u8] {
+        // SAFETY: u8 is 255 at most so this is always in bounds
+        unsafe { core::slice::from_raw_parts(self.0.as_ptr().add(1), self.0[0] as usize) }
+    }
+}
+
+impl CreatePbkdf2HmacSha256State for Key {
+    fn create_pbkdf2_hmac_sha256_state(&self) -> Pbkdf2HmacSha256State {
+        Pbkdf2HmacSha256State::new(self.key_bytes())
+    }
 }
 
 const KAT_PASSWORD: [u8; 13] = *b"pleaseletmein";
@@ -423,6 +454,190 @@ fn pow<const OP: u32>(
         nonce: found_nonce.load(std::sync::atomic::Ordering::Relaxed),
         output,
         actual_iterations: retired_count.load(std::sync::atomic::Ordering::Relaxed) - 1,
+        elapsed: start_time.elapsed(),
+    })
+}
+
+struct SearchResult {
+    key: Box<[u8]>,
+    elapsed: std::time::Duration,
+}
+
+fn search(
+    iterations: &AtomicU64,
+    rx: &crossbeam_channel::Receiver<Key>,
+    needle: &[u8],
+    salt: &[u8],
+    cf: NonZeroU8,
+    r: NonZeroU32,
+    p: NonZeroU32,
+    num_threads: NonZeroU32,
+    #[cfg(feature = "core_affinity")] core_stride: NonZeroUsize,
+) -> Option<SearchResult> {
+    let required_blocks = scrypt_opt::fixed_r::minimum_blocks(cf);
+
+    let mut full_slice = MultiThreadedHugeSlice::<Align64<scrypt_opt::fixed_r::Block<U1>>>::new(
+        required_blocks * 2 * r.get() as usize,
+        num_threads,
+    );
+
+    let stop_signal = AtomicBool::new(false);
+
+    let target = u64::from_be_bytes(needle[..8].try_into().unwrap()); // PHC requires at least 10 bytes of output
+
+    let output = Mutex::new(Key(CachePadded::new([0u8; 256])));
+
+    let start_time = std::time::Instant::now();
+    std::thread::scope(|s| {
+        #[cfg(feature = "core_affinity")]
+        let mut core_assigner = CoreAffinityAssigner::new(core_stride);
+
+        for (thread_idx, mut local_buffer) in full_slice.get().into_iter().enumerate() {
+            #[cfg(feature = "core_affinity")]
+            let core = core_assigner.next();
+            let output = &output;
+            let iterations = &iterations;
+            let stop_signal = &stop_signal;
+
+            std::thread::Builder::new()
+                .name(format!("search-worker-{}", thread_idx))
+                .spawn_scoped(s, move || {
+                    #[cfg(feature = "core_affinity")]
+                    if let Some(core) = core {
+                        if !core_affinity::set_for_current(core) {
+                            eprintln!("Failed to set core affinity for thread {}", thread_idx);
+                        }
+                    } else {
+                        eprintln!("No core affinity available for thread {}", thread_idx);
+                    }
+
+                    loop {
+                        let mut pending_key = None;
+                        let mut key_generator = core::iter::from_fn(|| {
+                            if stop_signal.load(std::sync::atomic::Ordering::Relaxed) {
+                                return None;
+                            }
+
+                            iterations.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+                            let key = rx.recv().ok();
+                            pending_key = key.clone();
+
+                            key
+                        });
+
+                        let result = match_r!(r.get(), R, {
+                            // if P=1 and R is small, try a static pipeline
+                            let (buffer0_inner, buffer1_inner) = local_buffer.as_mut()
+                                [..required_blocks * r.get() as usize * 2]
+                                .split_at_mut(required_blocks * r.get() as usize);
+
+                            let mut buffer0 = scrypt_opt::fixed_r::BufferSet::<
+                                &mut [Align64<scrypt_opt::fixed_r::Block<R>>],
+                                R,
+                            >::new(unsafe {
+                                core::slice::from_raw_parts_mut(
+                                    buffer0_inner.as_mut_ptr().cast(),
+                                    buffer1_inner.len() / r.get() as usize,
+                                )
+                            });
+
+                            let mut buffer1 = scrypt_opt::fixed_r::BufferSet::<
+                                &mut [Align64<scrypt_opt::fixed_r::Block<R>>],
+                                R,
+                            >::new(unsafe {
+                                core::slice::from_raw_parts_mut(
+                                    buffer1_inner.as_mut_ptr().cast(),
+                                    buffer1_inner.len() / r.get() as usize,
+                                )
+                            });
+
+                            scrypt_opt::pipeline::test_static::<
+                                { scrypt_opt::pipeline::CMP_EQ },
+                                _,
+                                R,
+                                _,
+                            >(
+                                [&mut buffer0, &mut buffer1],
+                                p,
+                                salt,
+                                u64::MAX.try_into().unwrap(),
+                                target,
+                                0,
+                                &mut key_generator,
+                            )
+                        })
+                        .unwrap_or_else(|| {
+                            // otherwise, use the dynamic pipeline
+                            scrypt_opt::pipeline::test::<{ scrypt_opt::pipeline::CMP_EQ }, _>(
+                                local_buffer.as_mut(),
+                                cf,
+                                r,
+                                p,
+                                salt,
+                                u64::MAX.try_into().unwrap(),
+                                target,
+                                0,
+                                &mut key_generator,
+                            )
+                        });
+
+                        if let Some((mut found_key, hmac_state)) = result {
+                            // double check the full output
+                            let mut full_output = vec![0u8; needle.len()].into_boxed_slice();
+                            hmac_state.emit(&mut full_output);
+
+                            // the first 64-bit matched but the rest does not
+                            if &*full_output != needle {
+                                unlikely();
+
+                                // this is astronomically unlikely happen so let's just fix it up with the slow but compact version
+                                if let Some(pending_key) = pending_key {
+                                    scrypt_opt::compat::scrypt(
+                                        &pending_key.key_bytes(),
+                                        salt,
+                                        cf,
+                                        r,
+                                        p,
+                                        &mut full_output,
+                                    );
+
+                                    if &*full_output != needle {
+                                        // none of the keys in the pipeline matched, loop back and restart the pipeline
+                                        continue;
+                                    }
+
+                                    // two jackpots in a row, the last one matched 64-bit and the next matched exactly
+                                    unlikely();
+
+                                    found_key = pending_key;
+                                }
+                            }
+
+                            let is_leader =
+                                !stop_signal.fetch_or(true, std::sync::atomic::Ordering::Relaxed);
+
+                            if is_leader {
+                                *output.lock().unwrap() = found_key;
+                            }
+                        }
+
+                        break;
+                    }
+                })
+                .expect("failed to spawn thread");
+        }
+    });
+
+    if !stop_signal.load(std::sync::atomic::Ordering::Relaxed) {
+        return None;
+    }
+
+    let key_len = output.lock().unwrap().0[0];
+    let key = output.lock().unwrap().0[1..][..key_len as usize].to_vec();
+
+    Some(SearchResult {
+        key: key.into_boxed_slice(),
         elapsed: start_time.elapsed(),
     })
 }
@@ -729,6 +944,128 @@ fn main() {
                 );
             });
         }
+        Command::Search {
+            target,
+            file,
+            progress,
+        } => {
+            let hash =
+                password_hash::PasswordHashString::parse(&target, password_hash::Encoding::B64)
+                    .expect("invalid hash");
+
+            const ALGORITHM: Ident<'static> = Ident::new_unwrap("scrypt");
+
+            assert_eq!(hash.algorithm(), ALGORITHM, "algorithm must be scrypt");
+            let params = hash.params();
+
+            let ln = params.get("ln").expect("ln param must be present");
+            let r = params.get("r").expect("r param must be present");
+            let p = params.get("p").expect("p param must be present");
+
+            let ln = ln
+                .decimal()
+                .expect("ln must be a number")
+                .try_into()
+                .expect("ln must be within u8 range");
+            let r = r.decimal().expect("r must be a number");
+            let p = p.decimal().expect("p must be a number");
+
+            let cf = NonZeroU8::new(ln).expect("ln must be positive");
+            let r = NonZeroU32::new(r).expect("r must be positive");
+            let p = NonZeroU32::new(p).expect("p must be positive");
+
+            let needle = hash.hash().expect("hash output must be present");
+
+            let salt = hash.salt().expect("salt must be present");
+
+            let mut salt_bytes = vec![0; salt.len()];
+            let salt_bytes = salt
+                .decode_b64(&mut salt_bytes)
+                .expect("failed to decode salt - must be valid b64");
+
+            let (tx, rx) = crossbeam_channel::bounded(num_threads.get() as usize * 4);
+
+            std::thread::spawn(move || {
+                fn fill_worker<R: Read>(
+                    reader: &mut BufReader<R>,
+                    tx: &crossbeam_channel::Sender<Key>,
+                ) {
+                    let mut buf = String::with_capacity(256);
+                    loop {
+                        buf.clear();
+                        let mut key = Key(CachePadded::new([0; 256]));
+
+                        let read_len = reader.read_line(&mut buf).unwrap();
+
+                        if read_len == 0 {
+                            return;
+                        }
+                        let key_bytes = buf.trim();
+                        if key_bytes.is_empty() {
+                            continue;
+                        }
+
+                        let Ok(buf_len_byte) = key_bytes.len().try_into() else {
+                            eprintln!("invalid key: {}", key_bytes);
+                            continue;
+                        };
+
+                        key.0[0] = buf_len_byte;
+                        key.0[1..][..key_bytes.len()].copy_from_slice(key_bytes.as_bytes());
+                        tx.send(key).unwrap();
+                    }
+                }
+
+                match file.as_str() {
+                    "-" => fill_worker(&mut BufReader::new(std::io::stdin().lock()), &tx),
+                    file => {
+                        fill_worker(&mut BufReader::new(std::fs::File::open(file).unwrap()), &tx)
+                    }
+                }
+            });
+
+            let iterations = Arc::new(AtomicU64::new(0));
+
+            if progress {
+                let iterations_clone = iterations.clone();
+                std::thread::spawn(move || {
+                    let mut prev = iterations_clone.load(std::sync::atomic::Ordering::Relaxed);
+                    loop {
+                        std::thread::sleep(std::time::Duration::from_millis(1000));
+                        let cur = iterations_clone.load(std::sync::atomic::Ordering::Relaxed);
+                        println!("{} c/s (total: {})", cur - prev, cur);
+                        prev = cur;
+                    }
+                });
+            }
+
+            let result = search(
+                &iterations,
+                &rx,
+                &needle.as_bytes(),
+                &salt_bytes,
+                cf,
+                r,
+                p,
+                num_threads,
+                #[cfg(feature = "core_affinity")]
+                core_stride,
+            );
+
+            if let Some(result) = result {
+                println!(
+                    "{}:{} ({} cands, {:.2} c/s)",
+                    target,
+                    String::from_utf8_lossy(&result.key),
+                    iterations.load(std::sync::atomic::Ordering::Relaxed) - 1,
+                    (iterations.load(std::sync::atomic::Ordering::Relaxed) - 1) as f64
+                        / result.elapsed.as_secs_f64()
+                );
+            } else {
+                println!("No key found");
+                std::process::exit(1);
+            }
+        }
         Command::Cast { fast } => cast(fast),
         Command::Compute {
             key,
@@ -775,7 +1112,7 @@ fn main() {
                 stdout.write_all(&output).unwrap();
             } else {
                 let encoder = base64::engine::general_purpose::STANDARD_NO_PAD;
-                write!(stdout, "$scrypt$ln={cf}$r={r}$p={p}$").unwrap();
+                write!(stdout, "$scrypt$ln={cf},r={r},p={p}$").unwrap();
 
                 {
                     let mut write = EncoderWriter::new(&mut stdout, &encoder);
