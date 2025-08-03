@@ -176,6 +176,7 @@ struct Key(CachePadded<[u8; 256]>);
 
 impl Key {
     fn key_bytes(&self) -> &[u8] {
+        // SAFETY: u8 is 255 at most so this is always in bounds
         unsafe { core::slice::from_raw_parts(self.0.as_ptr().add(1), self.0[0] as usize) }
     }
 }
@@ -621,7 +622,7 @@ fn search(
                             }
                         }
 
-                        return;
+                        break;
                     }
                 })
                 .expect("failed to spawn thread");
@@ -981,9 +982,6 @@ fn main() {
             let salt_bytes = salt
                 .decode_b64(&mut salt_bytes)
                 .expect("failed to decode salt - must be valid b64");
-
-            let mut key_bytes = vec![0; 256];
-            key_bytes[..salt_bytes.len()].copy_from_slice(&salt_bytes);
 
             let (tx, rx) = crossbeam_channel::bounded(num_threads.get() as usize * 4);
 
