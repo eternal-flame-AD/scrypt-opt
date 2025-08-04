@@ -427,7 +427,12 @@ impl Salsa20 for BlockPortableSimd2 {
 #[cfg(test)]
 #[allow(unused_imports)]
 mod tests {
-    use generic_array::{GenericArray, typenum::U1};
+    use generic_array::{
+        GenericArray,
+        typenum::{U1, U4, U5, U10},
+    };
+    use salsa20::cipher::StreamCipherCore;
+    use sha2::digest::generic_array::GenericArray as RcGenericArray;
 
     use super::*;
 
@@ -451,6 +456,74 @@ mod tests {
             S::shuffle_in(&mut result);
             S::shuffle_out(&mut result);
             assert_eq!(result, test_input);
+        }
+    }
+
+    fn test_scalar_keystream_against_reference<
+        RoundPairs: ArrayLength,
+        const ROUND_PAIRS: usize,
+    >() {
+        type Reference<RoundPairs> = ::salsa20::SalsaCore<RoundPairs>;
+
+        let mut raw_state0 = [0u32; 16];
+        raw_state0[0] = u32::from_be_bytes([b'e', b'x', b'p', b'a']);
+        raw_state0[4 + 1] = u32::from_be_bytes([b'n', b'd', b' ', b'3']);
+        raw_state0[8 + 2] = u32::from_be_bytes([b'2', b'-', b'b', b'y']);
+        raw_state0[12 + 3] = u32::from_be_bytes([b't', b'e', b' ', b'k']);
+        let mut raw_state1 = raw_state0.clone();
+        raw_state1[1] = 0xff;
+
+        let mut feedback0 = raw_state0.clone();
+        let mut feedback1 = raw_state1.clone();
+        for _rep in 0..32 {
+            let mut reference_state = Reference::<RoundPairs>::from_raw_state(raw_state0);
+            let mut output = RcGenericArray::default();
+            reference_state.write_keystream_block(&mut output);
+            let mut expected0 = [0u32; 16];
+            for i in 0..16 {
+                expected0[i] = u32::from_le_bytes(output[i * 4..][..4].try_into().unwrap());
+            }
+            reference_state = Reference::<RoundPairs>::from_raw_state(raw_state1);
+            reference_state.write_keystream_block(&mut output);
+            let mut expected1 = [0u32; 16];
+            for i in 0..16 {
+                expected1[i] = u32::from_le_bytes(output[i * 4..][..4].try_into().unwrap());
+            }
+
+            let mut shuffled_state0 = Align64(raw_state0.clone());
+            BlockScalar::<U1>::shuffle_in(&mut shuffled_state0);
+
+            let mut state = BlockScalar::<U1>::read(GenericArray::from_array([&shuffled_state0]));
+            state.keystream::<ROUND_PAIRS>();
+            state.write(GenericArray::from_array([&mut shuffled_state0]));
+            BlockScalar::<U1>::shuffle_out(&mut shuffled_state0);
+
+            assert_eq!(*shuffled_state0, expected0);
+
+            shuffled_state0 = Align64(raw_state0.clone());
+            let mut shuffled_state1 = Align64(raw_state1.clone());
+            BlockScalar::<U1>::shuffle_in(&mut shuffled_state1);
+            let mut state = BlockScalar::<U2>::read(GenericArray::from_array([
+                &shuffled_state1,
+                &shuffled_state0,
+            ]));
+            state.keystream::<ROUND_PAIRS>();
+            state.write(GenericArray::from_array([
+                &mut shuffled_state1,
+                &mut shuffled_state0,
+            ]));
+            BlockScalar::<U2>::shuffle_out(&mut shuffled_state0);
+            BlockScalar::<U2>::shuffle_out(&mut shuffled_state1);
+
+            assert_eq!(*shuffled_state0, expected0);
+            assert_eq!(*shuffled_state1, expected1);
+
+            for i in 0..16 {
+                raw_state0[i] = feedback0[i].wrapping_add(expected0[i]);
+                raw_state1[i] = feedback1[i].wrapping_add(expected1[i]);
+            }
+            feedback0 = expected1;
+            feedback1 = expected0;
         }
     }
 
@@ -529,6 +602,26 @@ mod tests {
 
         assert_eq!(output0, expected0);
         assert_eq!(output1, expected1);
+    }
+
+    #[test]
+    fn test_scalar_keystream_against_reference_2() {
+        test_scalar_keystream_against_reference::<U1, 1>();
+    }
+
+    #[test]
+    fn test_scalar_keystream_against_reference_8() {
+        test_scalar_keystream_against_reference::<U4, 4>();
+    }
+
+    #[test]
+    fn test_scalar_keystream_against_reference_10() {
+        test_scalar_keystream_against_reference::<U5, 5>();
+    }
+
+    #[test]
+    fn test_scalar_keystream_against_reference_20() {
+        test_scalar_keystream_against_reference::<U10, 10>();
     }
 
     #[cfg(feature = "portable-simd")]

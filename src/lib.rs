@@ -10,12 +10,18 @@
 extern crate alloc;
 
 #[rustfmt::skip]
+macro_rules! repeat2 {
+    ($i:ident, $b:block) => {
+        { let $i = 0; $b; }
+        { let $i = 1; $b; }
+    };
+}
+
+#[rustfmt::skip]
 macro_rules! repeat4 {
-    ($i:ident, $c:block) => {
-        { let $i = 0; $c; }
-        { let $i = 1; $c; }
-        { let $i = 2; $c; }
-        { let $i = 3; $c; }
+    ($i:ident, $b:block) => {
+        repeat2!(di, { let $i = di; $b });
+        repeat2!(di, { let $i = di + 2; $b });
     };
 }
 
@@ -52,7 +58,7 @@ pub mod pbkdf2_1;
 pub mod pipeline;
 
 /// Multi-buffer SHA256 implementation
-#[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
+#[cfg(target_arch = "x86_64")]
 pub(crate) mod sha2_mb;
 
 /// Runtime feature detection
@@ -105,16 +111,11 @@ cfg_if::cfg_if! {
         pub type DefaultEngine1 = salsa20::BlockPortableSimd;
         /// The default engine for this architecture that is guaranteed to be available
         pub type DefaultEngine2 = salsa20::BlockPortableSimd2;
-    } else if #[cfg(target_arch = "x86_64")] {
+    } else {
         /// The default engine for this architecture that is guaranteed to be available
         pub type DefaultEngine1 = salsa20::x86_64::BlockSse2<U1>;
         /// The default engine for this architecture that is guaranteed to be available
         pub type DefaultEngine2 = salsa20::x86_64::BlockSse2<U2>;
-    } else {
-        /// The default engine for this architecture that is guaranteed to be available
-        pub type DefaultEngine1 = salsa20::BlockScalar<U1>;
-        /// The default engine for this architecture that is guaranteed to be available
-        pub type DefaultEngine2 = salsa20::BlockScalar<U2>;
     }
 }
 
@@ -264,7 +265,7 @@ fn ro_mix_front_ex_dyn<S: Salsa20<Lanes = U1>>(
         let [src, dst] = unsafe {
             v.get_disjoint_unchecked_mut([(i * r)..((i + 1) * r), ((i + 1) * r)..((i + 2) * r)])
         };
-        block_mix_dyn!(r; [<S> &*src => &mut *dst]);
+        block_mix!(r; [<S> &*src => &mut *dst]);
     }
 }
 
@@ -307,7 +308,7 @@ fn ro_mix_back_ex_dyn<S: Salsa20<Lanes = U1>>(
                 ((n + 1) * r)..((n + 2) * r),
             ])
         };
-        block_mix_dyn!(r; [<S> &(&*in0, &*in1) => &mut *out]);
+        block_mix!(r; [<S> &(&*in0, &*in1) => &mut *out]);
         let idx2 = unsafe {
             v.as_ptr()
                 .add(((n + 1) * r) as usize)
@@ -326,7 +327,7 @@ fn ro_mix_back_ex_dyn<S: Salsa20<Lanes = U1>>(
                 ((n + 1) * r)..((n + 2) * r),
             ])
         };
-        block_mix_dyn!(r; [<S> &(&*v, &*t) => &mut *b]);
+        block_mix!(r; [<S> &(&*v, &*t) => &mut *b]);
     }
 
     // SAFETY: n is at least 1, v is at least r * (n + 2) long
@@ -435,7 +436,7 @@ fn ro_mix_interleaved_ex_dyn<'a, S: Salsa20<Lanes = U2>>(
                 ])
             };
 
-            block_mix_dyn!(r; [<S> &&*src => &mut *middle, <S> &(&*in0, &*in1) => &mut *out]);
+            block_mix!(r; [<S> &&*src => &mut *middle, <S> &(&*in0, &*in1) => &mut *out]);
         }
 
         {
@@ -459,7 +460,7 @@ fn ro_mix_interleaved_ex_dyn<'a, S: Salsa20<Lanes = U2>>(
                 ])
             };
 
-            block_mix_dyn!(r; [<S> &*middle => &mut *dst, <S> &(&*self_v, &*self_t) => &mut *self_b]);
+            block_mix!(r; [<S> &*middle => &mut *dst, <S> &(&*self_v, &*self_t) => &mut *self_b]);
         }
     }
     // SAFETY: n is at least 1, self_v is at least r * (n + 2) long
@@ -613,6 +614,15 @@ mod tests {
         pbkdf2_1::Pbkdf2HmacSha256State,
         pipeline::PipelineContext,
     };
+
+    macro_rules! write_test {
+        ($name:ident, $test:ident, $($generic:ty),* $(,)?) => {
+            #[test]
+            fn $name() {
+                $test::<$($generic),*>();
+            }
+        };
+    }
 
     #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
     fn test_ro_mix_cas_zmm<R: ArrayLength + NonZero>() {
@@ -951,68 +961,153 @@ mod tests {
     }
 
     #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
-    fn test_ro_mix_cas_interleaved_zmm<R: ArrayLength + NonZero>() {
-        const CF: u8 = 8;
+    mod avx512 {
+        use super::*;
 
-        let passwords = [
-            b"password0".as_slice(),
-            b"password1".as_slice(),
-            b"password2".as_slice(),
-            b"password3".as_slice(),
-            b"password4".as_slice(),
-            b"password5".as_slice(),
-            b"password6".as_slice(),
-            b"password7".as_slice(),
-            b"password8".as_slice(),
-            b"password9".as_slice(),
-            b"password10".as_slice(),
-            b"password11".as_slice(),
-            b"password12".as_slice(),
-            b"password13".as_slice(),
-            b"password14".as_slice(),
-            b"password15".as_slice(),
-        ];
+        fn test_ro_mix_cas_interleaved_zmm<R: ArrayLength + NonZero>() {
+            const CF: u8 = 8;
 
-        let hmacs: [Pbkdf2HmacSha256State; 16] =
-            core::array::from_fn(|i| Pbkdf2HmacSha256State::new(passwords[i]));
+            let passwords = [
+                b"password0".as_slice(),
+                b"password1".as_slice(),
+                b"password2".as_slice(),
+                b"password3".as_slice(),
+                b"password4".as_slice(),
+                b"password5".as_slice(),
+                b"password6".as_slice(),
+                b"password7".as_slice(),
+                b"password8".as_slice(),
+                b"password9".as_slice(),
+                b"password10".as_slice(),
+                b"password11".as_slice(),
+                b"password12".as_slice(),
+                b"password13".as_slice(),
+                b"password14".as_slice(),
+                b"password15".as_slice(),
+            ];
 
-        let mut expected = [[0u8; 64]; 16];
+            let hmacs: [Pbkdf2HmacSha256State; 16] =
+                core::array::from_fn(|i| Pbkdf2HmacSha256State::new(passwords[i]));
 
-        for (i, password) in passwords.iter().enumerate() {
-            let params = scrypt::Params::new(CF, R::U32, 1, 64).unwrap();
-            scrypt::scrypt(password, b"salt", &params, &mut expected[i]).expect("scrypt failed");
-        }
+            let mut expected = [[0u8; 64]; 16];
 
-        let mut buffers0 = BufferSet::<_, R>::new_boxed(CF.try_into().unwrap());
-        let mut buffers1 = BufferSet::<_, R>::new_boxed(CF.try_into().unwrap());
-
-        let mut output = [0u8; 64];
-        buffers0.set_input(&hmacs[0], b"salt");
-        buffers1.set_input(&hmacs[1], b"salt");
-        buffers0.ro_mix_front();
-        for i in 2..16 {
-            buffers0.ro_mix_interleaved_ex_zmm::<salsa20::x86_64::BlockAvx512FMb2>(&mut buffers1);
-            buffers0.extract_output(&hmacs[i - 2], &mut output);
-            assert_eq!(output, expected[i - 2], "error at round {}", i);
-            core::hint::black_box(&mut buffers0);
-            (buffers0, buffers1) = (buffers1, buffers0);
-            buffers1.set_input(&hmacs[i], b"salt");
-        }
-        buffers0.ro_mix_back();
-        buffers1.scrypt_ro_mix();
-        buffers0.extract_output(&hmacs[14], &mut output);
-        assert_eq!(output, expected[14]);
-        buffers1.extract_output(&hmacs[15], &mut output);
-        assert_eq!(output, expected[15]);
-    }
-
-    macro_rules! write_test {
-        ($name:ident, $test:ident, $($generic:ty),* $(,)?) => {
-            #[test]
-            fn $name() {
-                $test::<$($generic),*>();
+            for (i, password) in passwords.iter().enumerate() {
+                let params = scrypt::Params::new(CF, R::U32, 1, 64).unwrap();
+                scrypt::scrypt(password, b"salt", &params, &mut expected[i])
+                    .expect("scrypt failed");
             }
-        };
+
+            let mut buffers0 = BufferSet::<_, R>::new_boxed(CF.try_into().unwrap());
+            let mut buffers1 = BufferSet::<_, R>::new_boxed(CF.try_into().unwrap());
+
+            let mut output = [0u8; 64];
+            buffers0.set_input(&hmacs[0], b"salt");
+            buffers1.set_input(&hmacs[1], b"salt");
+            buffers0.ro_mix_front();
+            for i in 2..16 {
+                buffers0
+                    .ro_mix_interleaved_ex_zmm::<salsa20::x86_64::BlockAvx512FMb2>(&mut buffers1);
+                buffers0.extract_output(&hmacs[i - 2], &mut output);
+                assert_eq!(output, expected[i - 2], "error at round {}", i);
+                core::hint::black_box(&mut buffers0);
+                (buffers0, buffers1) = (buffers1, buffers0);
+                buffers1.set_input(&hmacs[i], b"salt");
+            }
+            buffers0.ro_mix_back();
+            buffers1.scrypt_ro_mix();
+            buffers0.extract_output(&hmacs[14], &mut output);
+            assert_eq!(output, expected[14]);
+            buffers1.extract_output(&hmacs[15], &mut output);
+            assert_eq!(output, expected[15]);
+        }
+
+        write_test!(
+            test_ro_mix_cas_avx512f_1,
+            test_ro_mix_cas_ex,
+            U1,
+            salsa20::x86_64::BlockAvx512F
+        );
+        write_test!(
+            test_ro_mix_cas_avx512f_2,
+            test_ro_mix_cas_ex,
+            U2,
+            salsa20::x86_64::BlockAvx512F
+        );
+        write_test!(
+            test_ro_mix_cas_avx512f_4,
+            test_ro_mix_cas_ex,
+            U4,
+            salsa20::x86_64::BlockAvx512F
+        );
+        write_test!(
+            test_ro_mix_cas_avx512f_8,
+            test_ro_mix_cas_ex,
+            U8,
+            salsa20::x86_64::BlockAvx512F
+        );
+
+        write_test!(
+            test_ro_mix_cas_avx512f_16,
+            test_ro_mix_cas_ex,
+            U16,
+            salsa20::x86_64::BlockAvx512F
+        );
+        write_test!(
+            test_ro_mix_cas_interleaved_avx512f_1,
+            test_ro_mix_cas_interleaved_ex,
+            U1,
+            salsa20::x86_64::BlockAvx512F,
+            salsa20::x86_64::BlockAvx512FMb2
+        );
+        write_test!(
+            test_ro_mix_cas_interleaved_avx512f_2,
+            test_ro_mix_cas_interleaved_ex,
+            U2,
+            salsa20::x86_64::BlockAvx512F,
+            salsa20::x86_64::BlockAvx512FMb2
+        );
+        #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+        write_test!(
+            test_ro_mix_cas_interleaved_avx512f_4,
+            test_ro_mix_cas_interleaved_ex,
+            U4,
+            salsa20::x86_64::BlockAvx512F,
+            salsa20::x86_64::BlockAvx512FMb2
+        );
+        write_test!(
+            test_ro_mix_cas_interleaved_avx512f_8,
+            test_ro_mix_cas_interleaved_ex,
+            U8,
+            salsa20::x86_64::BlockAvx512F,
+            salsa20::x86_64::BlockAvx512FMb2
+        );
+
+        // AVX-512 register resident versions
+
+        write_test!(test_ro_mix_cas_zmm_1, test_ro_mix_cas_zmm, U1);
+        write_test!(test_ro_mix_cas_zmm_2, test_ro_mix_cas_zmm, U2);
+        write_test!(test_ro_mix_cas_zmm_4, test_ro_mix_cas_zmm, U4);
+        write_test!(test_ro_mix_cas_zmm_8, test_ro_mix_cas_zmm, U8);
+        write_test!(
+            test_ro_mix_cas_interleaved_zmm_1,
+            test_ro_mix_cas_interleaved_zmm,
+            U1
+        );
+        write_test!(
+            test_ro_mix_cas_interleaved_zmm_2,
+            test_ro_mix_cas_interleaved_zmm,
+            U2
+        );
+        write_test!(
+            test_ro_mix_cas_interleaved_zmm_4,
+            test_ro_mix_cas_interleaved_zmm,
+            U4
+        );
+        write_test!(
+            test_ro_mix_cas_interleaved_zmm_8,
+            test_ro_mix_cas_interleaved_zmm,
+            U8
+        );
     }
 
     // tests for whatever is the default/publicly visible version
@@ -1053,51 +1148,50 @@ mod tests {
     );
 
     // AVX-2 versions
-
     #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
-    write_test!(
-        test_ro_mix_cas_interleaved_1_avx2,
-        test_ro_mix_cas_interleaved_ex,
-        U1,
-        salsa20::x86_64::BlockSse2<U1>,
-        salsa20::x86_64::BlockAvx2Mb2
-    );
+    mod avx2 {
+        use super::*;
 
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
-    write_test!(
-        test_ro_mix_cas_interleaved_2_avx2,
-        test_ro_mix_cas_interleaved_ex,
-        U2,
-        salsa20::x86_64::BlockSse2<U1>,
-        salsa20::x86_64::BlockAvx2Mb2
-    );
+        write_test!(
+            test_ro_mix_cas_interleaved_1_avx2,
+            test_ro_mix_cas_interleaved_ex,
+            U1,
+            salsa20::x86_64::BlockSse2<U1>,
+            salsa20::x86_64::BlockAvx2Mb2
+        );
 
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
-    write_test!(
-        test_ro_mix_cas_interleaved_4_avx2,
-        test_ro_mix_cas_interleaved_ex,
-        U4,
-        salsa20::x86_64::BlockSse2<U1>,
-        salsa20::x86_64::BlockAvx2Mb2
-    );
+        write_test!(
+            test_ro_mix_cas_interleaved_2_avx2,
+            test_ro_mix_cas_interleaved_ex,
+            U2,
+            salsa20::x86_64::BlockSse2<U1>,
+            salsa20::x86_64::BlockAvx2Mb2
+        );
 
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
-    write_test!(
-        test_ro_mix_cas_interleaved_8_avx2,
-        test_ro_mix_cas_interleaved_ex,
-        U8,
-        salsa20::x86_64::BlockSse2<U1>,
-        salsa20::x86_64::BlockAvx2Mb2
-    );
+        write_test!(
+            test_ro_mix_cas_interleaved_4_avx2,
+            test_ro_mix_cas_interleaved_ex,
+            U4,
+            salsa20::x86_64::BlockSse2<U1>,
+            salsa20::x86_64::BlockAvx2Mb2
+        );
 
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx2"))]
-    write_test!(
-        test_ro_mix_cas_interleaved_16_avx2,
-        test_ro_mix_cas_interleaved_ex,
-        U16,
-        salsa20::x86_64::BlockSse2<U1>,
-        salsa20::x86_64::BlockAvx2Mb2
-    );
+        write_test!(
+            test_ro_mix_cas_interleaved_8_avx2,
+            test_ro_mix_cas_interleaved_ex,
+            U8,
+            salsa20::x86_64::BlockSse2<U1>,
+            salsa20::x86_64::BlockAvx2Mb2
+        );
+
+        write_test!(
+            test_ro_mix_cas_interleaved_16_avx2,
+            test_ro_mix_cas_interleaved_ex,
+            U16,
+            salsa20::x86_64::BlockSse2<U1>,
+            salsa20::x86_64::BlockAvx2Mb2
+        );
+    }
 
     #[cfg(target_arch = "x86_64")]
     write_test!(
@@ -1210,113 +1304,6 @@ mod tests {
         U16,
         salsa20::BlockScalar<U1>,
         salsa20::BlockScalar<U2>
-    );
-
-    // AVX-512 versions
-
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
-    write_test!(
-        test_ro_mix_cas_avx512f_1,
-        test_ro_mix_cas_ex,
-        U1,
-        salsa20::x86_64::BlockAvx512F
-    );
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
-    write_test!(
-        test_ro_mix_cas_avx512f_2,
-        test_ro_mix_cas_ex,
-        U2,
-        salsa20::x86_64::BlockAvx512F
-    );
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
-    write_test!(
-        test_ro_mix_cas_avx512f_4,
-        test_ro_mix_cas_ex,
-        U4,
-        salsa20::x86_64::BlockAvx512F
-    );
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
-    write_test!(
-        test_ro_mix_cas_avx512f_8,
-        test_ro_mix_cas_ex,
-        U8,
-        salsa20::x86_64::BlockAvx512F
-    );
-
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
-    write_test!(
-        test_ro_mix_cas_avx512f_16,
-        test_ro_mix_cas_ex,
-        U16,
-        salsa20::x86_64::BlockAvx512F
-    );
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
-    write_test!(
-        test_ro_mix_cas_interleaved_avx512f_1,
-        test_ro_mix_cas_interleaved_ex,
-        U1,
-        salsa20::x86_64::BlockAvx512F,
-        salsa20::x86_64::BlockAvx512FMb2
-    );
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
-    write_test!(
-        test_ro_mix_cas_interleaved_avx512f_2,
-        test_ro_mix_cas_interleaved_ex,
-        U2,
-        salsa20::x86_64::BlockAvx512F,
-        salsa20::x86_64::BlockAvx512FMb2
-    );
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
-    write_test!(
-        test_ro_mix_cas_interleaved_avx512f_4,
-        test_ro_mix_cas_interleaved_ex,
-        U4,
-        salsa20::x86_64::BlockAvx512F,
-        salsa20::x86_64::BlockAvx512FMb2
-    );
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
-    write_test!(
-        test_ro_mix_cas_interleaved_avx512f_8,
-        test_ro_mix_cas_interleaved_ex,
-        U8,
-        salsa20::x86_64::BlockAvx512F,
-        salsa20::x86_64::BlockAvx512FMb2
-    );
-
-    // AVX-512 register resident versions
-
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
-    write_test!(test_ro_mix_cas_zmm_1, test_ro_mix_cas_zmm, U1);
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
-    write_test!(test_ro_mix_cas_zmm_2, test_ro_mix_cas_zmm, U2);
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
-    write_test!(test_ro_mix_cas_zmm_4, test_ro_mix_cas_zmm, U4);
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
-    write_test!(test_ro_mix_cas_zmm_8, test_ro_mix_cas_zmm, U8);
-
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
-    write_test!(
-        test_ro_mix_cas_interleaved_zmm_1,
-        test_ro_mix_cas_interleaved_zmm,
-        U1
-    );
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
-    write_test!(
-        test_ro_mix_cas_interleaved_zmm_2,
-        test_ro_mix_cas_interleaved_zmm,
-        U2
-    );
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
-    write_test!(
-        test_ro_mix_cas_interleaved_zmm_4,
-        test_ro_mix_cas_interleaved_zmm,
-        U4
-    );
-    #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
-    write_test!(
-        test_ro_mix_cas_interleaved_zmm_8,
-        test_ro_mix_cas_interleaved_zmm,
-        U8
     );
 
     // portable SIMD versions

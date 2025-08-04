@@ -1,6 +1,5 @@
-#[allow(unused_macros, reason = "false alarm")]
 macro_rules! block_mix {
-    ($r:expr; [<$s:ty> $input:expr => $output:expr]) => {
+    (<$r:ty>; [<$s:ty> $input:expr => $output:expr]) => {
         #[allow(unused_unsafe)]
         {
             use crate::{
@@ -8,7 +7,7 @@ macro_rules! block_mix {
                 salsa20::{BlockType, Salsa20},
             };
 
-            let mut x: <$s as Salsa20>::Block = unsafe { $input.load($r * 2 - 1) };
+            let mut x: <$s as Salsa20>::Block = unsafe { $input.load(<$r>::USIZE * 2 - 1) };
 
             macro_rules! iteration {
                 ($i:expr) => {{
@@ -30,29 +29,29 @@ macro_rules! block_mix {
                 }};
             }
 
-            if $r <= crate::fixed_r::MAX_R_FOR_UNROLLING {
+            if <$r>::USIZE <= crate::fixed_r::MAX_R_FOR_UNROLLING {
                 repeat8!(i, {
-                    if i < $r {
+                    if i < <$r>::USIZE {
                         iteration!(i);
                     }
                 });
 
                 let _ = x;
             } else {
-                for i in 0..$r {
+                for i in 0..<$r>::USIZE {
                     iteration!(i);
                 }
             }
         }
     };
-    ($r:expr; [
+    (<$r:ty>; [
         <$s0:ty> $input0:expr => $output0:expr,
         <$s1:ty> $input1:expr => $output1:expr$(,)?
     ]) => {
         #[allow(unused_unsafe)]
         {
-            let mut x0: <$s0 as Salsa20>::Block = unsafe { $input0.load($r * 2 - 1) };
-            let mut x1: <$s1 as Salsa20>::Block = unsafe { $input1.load($r * 2 - 1) };
+            let mut x0: <$s0 as Salsa20>::Block = unsafe { $input0.load(<$r>::USIZE * 2 - 1) };
+            let mut x1: <$s1 as Salsa20>::Block = unsafe { $input1.load(<$r>::USIZE * 2 - 1) };
 
             macro_rules! iteration {
                 ($i:expr) => {{
@@ -78,9 +77,9 @@ macro_rules! block_mix {
                 }};
             }
 
-            if $r <= crate::fixed_r::MAX_R_FOR_UNROLLING {
+            if <$r>::USIZE <= crate::fixed_r::MAX_R_FOR_UNROLLING {
                 repeat8!(i, {
-                    if i < $r {
+                    if i < <$r>::USIZE {
                         iteration!(i);
                     }
                 });
@@ -88,15 +87,12 @@ macro_rules! block_mix {
                 let _ = x0;
                 let _ = x1;
             } else {
-                for i in 0..$r {
+                for i in 0..<$r>::USIZE {
                     iteration!(i);
                 }
             }
         }
     };
-}
-#[allow(unused_macros, reason = "false alarm")]
-macro_rules! block_mix_dyn {
     ($r:expr; [<$s:ty> $input:expr => $output:expr]) => {{
         let output: &mut [Align64<crate::fixed_r::Block<U1>>] = $output;
         let mut x: <$s as Salsa20>::Block = unsafe { $input.load($r * 2 - 1) };

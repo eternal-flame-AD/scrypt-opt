@@ -296,7 +296,7 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
 
         for i in 0..n {
             let [src, dst] = unsafe { v.get_disjoint_unchecked_mut([i, i + 1]) };
-            block_mix!(R::USIZE; [<S> &*src => &mut *dst]);
+            block_mix!(<R>; [<S> &*src => &mut *dst]);
         }
     }
 
@@ -318,14 +318,14 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
 
             // SAFETY: the largest j value is n-1, so the largest index of the 3 is n+1, which is in bounds after the >=n+2 check
             let [in0, in1, out] = unsafe { v.get_disjoint_unchecked_mut([n, j, n + 1]) };
-            block_mix!(R::USIZE; [<S> (&*in0, &*in1) => &mut *out]);
+            block_mix!(<R>; [<S> (&*in0, &*in1) => &mut *out]);
             let idx2 = integerify!(<R> unsafe { v.get_unchecked(n + 1) });
 
             let j2 = idx2 & (n - 1);
 
             // SAFETY: the largest j2 value is n-1, so the largest index of the 3 is n+1, which is in bounds after the >=n+2 check
             let [b, v, t] = unsafe { v.get_disjoint_unchecked_mut([n, j2, n + 1]) };
-            block_mix!(R::USIZE; [<S> (&*v, &*t) => &mut *b]);
+            block_mix!(<R>; [<S> (&*v, &*t) => &mut *b]);
         }
 
         unsafe {
@@ -406,7 +406,7 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
 
                 let [in0, in1, out] = unsafe { self_v.get_disjoint_unchecked_mut([j, n, n + 1]) };
 
-                block_mix!(R::USIZE; [<S> &*src => &mut *middle, <S> (&*in0, &*in1) => &mut *out]);
+                block_mix!(<R>; [<S> &*src => &mut *middle, <S> (&*in0, &*in1) => &mut *out]);
             }
 
             {
@@ -418,7 +418,7 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
                 let [self_b, self_v, self_t] =
                     unsafe { self_v.get_disjoint_unchecked_mut([n, j2, n + 1]) };
 
-                block_mix!(R::USIZE; [<S> &*middle => &mut *dst, <S> (&*self_v, &*self_t) => &mut *self_b]);
+                block_mix!(<R>; [<S> &*middle => &mut *dst, <S> (&*self_v, &*self_t) => &mut *self_b]);
             }
         }
 
@@ -631,20 +631,20 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
             let mut input_b = InRegisterAdapter::<R>::new();
             for i in 0..(n - 1) {
                 let [src, dst] = v.get_disjoint_unchecked_mut([i, i + 1]);
-                block_mix!(R::USIZE; [<S> &*src => &mut *dst]);
+                block_mix!(<R>; [<S> &*src => &mut *dst]);
             }
-            block_mix!(R::USIZE; [<S> v.get_unchecked(n - 1) => &mut input_b]);
+            block_mix!(<R>; [<S> v.get_unchecked(n - 1) => &mut input_b]);
 
             let mut idx = input_b.extract_idx() as usize & (n - 1);
 
             for _ in (0..n).step_by(2) {
                 // for some reason this doesn't spill, so let's leave it as is
                 let mut input_t = InRegisterAdapter::<R>::new();
-                block_mix!(R::USIZE; [<S> (&input_b, v.get_unchecked(idx) ) => &mut input_t]);
+                block_mix!(<R>; [<S> (&input_b, v.get_unchecked(idx) ) => &mut input_t]);
 
                 idx = input_t.extract_idx() as usize & (n - 1);
 
-                block_mix!(R::USIZE; [<S> (&input_t, v.get_unchecked(idx)) => &mut input_b]);
+                block_mix!(<R>; [<S> (&input_t, v.get_unchecked(idx)) => &mut input_b]);
 
                 idx = input_b.extract_idx() as usize & (n - 1);
             }
@@ -734,11 +734,11 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
 
             let [self_vj, self_t] = unsafe { self_v.get_disjoint_unchecked_mut([idx, n + 1]) };
             if R::USIZE <= MAX_R_FOR_FULL_INTERLEAVED_ZMM {
-                block_mix!(R::USIZE; [<S> &*src => &mut *middle, <S> (&*self_vj, &input_b) => &mut input_t]);
+                block_mix!(<R>; [<S> &*src => &mut *middle, <S> (&*self_vj, &input_b) => &mut input_t]);
                 idx = input_t.extract_idx() as usize & (n - 1);
             } else {
                 block_mix!(
-                    R::USIZE; [<S> &*src => &mut *middle, <S> (&*self_vj, &input_b) => &mut *self_t]
+                    <R>; [<S> &*src => &mut *middle, <S> (&*self_vj, &input_b) => &mut *self_t]
                 );
                 idx = integerify!(<R> self_t ) & (n - 1);
             }
@@ -746,9 +746,9 @@ impl<Q: AsRef<[Align64<Block<R>>]> + AsMut<[Align64<Block<R>>]>, R: ArrayLength 
             let [self_vj, self_t] = unsafe { self_v.get_disjoint_unchecked_mut([idx, n + 1]) };
             {
                 if R::USIZE <= MAX_R_FOR_FULL_INTERLEAVED_ZMM {
-                    block_mix!(R::USIZE; [<S> &*middle => &mut *dst, <S> (&*self_vj, &input_t) => &mut input_b]);
+                    block_mix!(<R>; [<S> &*middle => &mut *dst, <S> (&*self_vj, &input_t) => &mut input_b]);
                 } else {
-                    block_mix!(R::USIZE; [<S> &*middle => &mut *dst, <S> (&*self_vj, &*self_t) => &mut input_b]);
+                    block_mix!(<R>; [<S> &*middle => &mut *dst, <S> (&*self_vj, &*self_t) => &mut input_b]);
                 }
 
                 idx = input_b.extract_idx() as usize & (n - 1);

@@ -1,6 +1,6 @@
 use generic_array::{
     ArrayLength, GenericArray,
-    typenum::{IsLess, NonZero, U1, U32, Unsigned},
+    typenum::{NonZero, U1, Unsigned},
 };
 use sha2::{
     Digest, digest::crypto_common, digest::generic_array as rc_generic_array,
@@ -8,8 +8,8 @@ use sha2::{
 };
 
 use crate::{
-    Align64,
     fixed_r::{Block, Mul2, Mul128},
+    memory::{Align32, Align64},
 };
 
 const IV: [u32; 8] = [
@@ -63,38 +63,139 @@ impl SoftSha256 {
         }
     }
 
-    // a special case for hashing 4 more bytes without a full state clone
+    /// Append a counter value to the buffer and finalize the hash
     #[inline(always)]
-    fn remainder_finalize<L: ArrayLength + IsLess<U32>>(
-        &self,
-        input: GenericArray<u8, L>,
-    ) -> [u32; 8] {
-        let msg_len_bytes = self.prev_blocks * 64 + self.ptr as u64 + L::U64;
+    fn remainder_finalize(&self, input: u32) -> [u32; 8] {
+        let msg_len_bytes = self.prev_blocks * 64 + self.ptr as u64 + 4;
         let mut words = self.words;
-        let mut tmp = self.buf;
+        let mut tmp = [0u8; 68];
         let mut ptr = self.ptr;
+        tmp[..64].copy_from_slice(&self.buf);
 
-        if ptr > 64 - L::U8 - 1 {
+        if ptr > 64 - 4 - 1 {
             let last_block_len = 64 - ptr;
-            tmp[ptr as usize..].copy_from_slice(&input[..last_block_len as usize]);
-            sha2::compress256(&mut words, &[*RcGenericArray::from_slice(&tmp)]);
-            tmp.fill(0);
-            ptr = L::U8 - last_block_len;
-            tmp[..ptr as usize].copy_from_slice(&input[last_block_len as usize..]);
+            tmp[ptr as usize..][..4].copy_from_slice(&input.to_be_bytes());
+            sha2::compress256(
+                &mut words,
+                core::array::from_ref(RcGenericArray::from_slice(&tmp[..64])),
+            );
+            tmp.copy_within(64.., 0);
+            ptr = 4 - last_block_len;
+            tmp[ptr as usize..].fill(0);
             tmp[ptr as usize] = 0x80;
         } else {
-            tmp[ptr as usize..][..L::USIZE].copy_from_slice(&input);
-            ptr += L::U8;
+            tmp[ptr as usize..][..4].copy_from_slice(&input.to_be_bytes());
+            ptr += 4;
             tmp[ptr as usize] = 0x80;
+
+            if ptr >= 56 {
+                sha2::compress256(
+                    &mut words,
+                    core::array::from_ref(RcGenericArray::from_slice(&tmp[..64])),
+                );
+                tmp.fill(0);
+            }
         }
 
-        if ptr >= 56 {
-            sha2::compress256(&mut words, &[tmp]);
-            tmp.fill(0);
-        }
-        tmp[(64 - 8)..].copy_from_slice(&(msg_len_bytes * 8).to_be_bytes());
-        sha2::compress256(&mut words, &[tmp]);
+        tmp[(64 - 8)..][..8].copy_from_slice(&(msg_len_bytes * 8).to_be_bytes());
+        sha2::compress256(
+            &mut words,
+            core::array::from_ref(RcGenericArray::from_slice(&tmp[..64])),
+        );
         words
+    }
+
+    #[inline(always)]
+    #[cfg(target_arch = "x86_64")]
+    /// Finalize the hash using SHA-NI instructions, applying two different counter values
+    unsafe fn remainder_finalize_dual_sna_ni(
+        &self,
+        counter0: u32,
+        counter1: u32,
+    ) -> [Align32<[u32; 8]>; 2] {
+        let msg_len_bytes = self.prev_blocks * 64 + self.ptr as u64 + 4;
+        let words = self.words;
+        let mut tmp0 = [Align32([0u32; 8]); 3];
+
+        unsafe {
+            core::slice::from_raw_parts_mut(tmp0.as_mut_ptr().cast(), self.ptr as usize)
+                .copy_from_slice(&self.buf[..self.ptr as usize]);
+            tmp0.as_mut_ptr()
+                .cast::<u8>()
+                .add(self.ptr as usize)
+                .add(4)
+                .write(0x80);
+        }
+        let mut inner_hash0 = Align32(words);
+        let mut inner_hash1 = Align32(words);
+
+        let mut tmp1 = tmp0;
+
+        unsafe {
+            tmp0.as_mut_ptr()
+                .cast::<u8>()
+                .add(self.ptr as usize)
+                .cast::<[u8; 4]>()
+                .write_unaligned(counter0.to_be_bytes());
+            tmp1.as_mut_ptr()
+                .cast::<u8>()
+                .add(self.ptr as usize)
+                .cast::<[u8; 4]>()
+                .write_unaligned(counter1.to_be_bytes());
+        }
+
+        if self.ptr > 64 - 4 - 1 {
+            let [tmp0_0, tmp0_1, padding0] = tmp0;
+            let [tmp1_0, tmp1_1, padding1] = tmp1;
+            unsafe {
+                crate::sha2_mb::multiway_arx_mb2_sha_ni::<true, false>(
+                    [&mut inner_hash0, &mut inner_hash1],
+                    [[&tmp0_0, &tmp0_1], [&tmp1_0, &tmp1_1]],
+                );
+            }
+            // pull the padding buffer back to the front
+            tmp0[0] = padding0;
+            tmp1[0] = padding1;
+            tmp0[1] = unsafe { core::mem::zeroed() };
+            tmp1[1] = unsafe { core::mem::zeroed() };
+        } else if self.ptr + 4 >= 56 {
+            let [tmp0_0, tmp0_1, _padding] = tmp0;
+            let [tmp1_0, tmp1_1, _padding] = tmp1;
+            unsafe {
+                crate::sha2_mb::multiway_arx_mb2_sha_ni::<true, false>(
+                    [&mut inner_hash0, &mut inner_hash1],
+                    [[&tmp0_0, &tmp0_1], [&tmp1_0, &tmp1_1]],
+                );
+            }
+            tmp0 = unsafe { core::mem::zeroed() };
+            tmp1 = unsafe { core::mem::zeroed() };
+        }
+
+        // SAFETY: the base pointer is aligned to 8 bytes if the base pointer is aligned to 8 bytes
+        unsafe {
+            tmp0.as_mut_ptr()
+                .cast::<u8>()
+                .add(64 - 8)
+                .cast::<u64>()
+                .write((msg_len_bytes * 8).swap_bytes());
+            tmp1.as_mut_ptr()
+                .cast::<u8>()
+                .add(64 - 8)
+                .cast::<u64>()
+                .write((msg_len_bytes * 8).swap_bytes());
+        }
+
+        let [tmp0_0, tmp0_1, _padding] = tmp0;
+        let [tmp1_0, tmp1_1, _padding] = tmp1;
+
+        unsafe {
+            crate::sha2_mb::multiway_arx_mb2_sha_ni::<true, false>(
+                [&mut inner_hash0, &mut inner_hash1],
+                [[&tmp0_0, &tmp0_1], [&tmp1_0, &tmp1_1]],
+            );
+        }
+
+        [inner_hash0, inner_hash1]
     }
 }
 
@@ -372,24 +473,67 @@ impl Pbkdf2HmacSha256State {
             prev_blocks: self.previous_blocks + 1,
         };
         inner_digest.update(salt);
-        let mut tmp_block_outer = [crypto_common::Block::<sha2::Sha256>::default()];
-        tmp_block_outer[0][32] = 0x80;
-        tmp_block_outer[0][62] = 0x03;
+        let mut tmp_block_outer = crypto_common::Block::<sha2::Sha256>::default();
+        tmp_block_outer[32] = 0x80;
+        tmp_block_outer[62] = 0x03;
 
         let mut idx = offset;
         for mut output in output {
             let output_item = output.as_mut();
 
-            #[cfg(not(all(
-                target_arch = "x86_64",
-                target_feature = "avx2",
-                not(target_feature = "sha")
-            )))]
-            // unroll only if a 4-way implementation is selected, this path we can focus on code size
+            #[cfg(target_arch = "x86_64")]
+            if crate::features::Feature::check(&crate::features::Sha)
+                && crate::features::Feature::check(&crate::features::Avx2)
+            {
+                const PADDING_BLOCK: Align32<[u32; 8]> = {
+                    let mut padding_block = Align32([0u32; 8]);
+                    padding_block.0[0] = u32::from_be_bytes([0x80, 0, 0, 0]);
+                    padding_block.0[7] = 768;
+                    padding_block
+                };
+
+                for i in (0..output_item.len()).step_by(32 * 2) {
+                    idx += 1;
+                    let [inner_hash0, inner_hash1] =
+                        unsafe { inner_digest.remainder_finalize_dual_sna_ni(idx, idx + 1) };
+                    idx += 1;
+
+                    let mut outer_hashes0 = unsafe {
+                        output_item
+                            .as_mut_ptr()
+                            .add(i)
+                            .cast::<Align32<[u32; 8]>>()
+                            .as_mut()
+                            .unwrap()
+                    };
+                    let mut outer_hashes1 = unsafe {
+                        output_item
+                            .as_mut_ptr()
+                            .add(i)
+                            .cast::<Align32<[u32; 8]>>()
+                            .add(1)
+                            .as_mut()
+                            .unwrap()
+                    };
+                    **outer_hashes0 = self.outer_digest_words;
+                    **outer_hashes1 = self.outer_digest_words;
+
+                    unsafe {
+                        crate::sha2_mb::multiway_arx_mb2_sha_ni::<false, true>(
+                            [&mut outer_hashes0, &mut outer_hashes1],
+                            [
+                                [&inner_hash0, &PADDING_BLOCK],
+                                [&inner_hash1, &PADDING_BLOCK],
+                            ],
+                        );
+                    }
+                }
+                continue;
+            }
+
             for i in (0..output_item.len()).step_by(32) {
                 idx += 1;
-                let inner_hash =
-                    inner_digest.remainder_finalize(GenericArray::from_array(idx.to_be_bytes()));
+                let inner_hash = inner_digest.remainder_finalize(idx);
 
                 repeat8!(k, {
                     // SAFETY: aligned to 64 bytes by type constraint
@@ -404,7 +548,7 @@ impl Pbkdf2HmacSha256State {
 
                 let mut outer_hash = self.outer_digest_words;
 
-                sha2::compress256(&mut outer_hash, &tmp_block_outer);
+                sha2::compress256(&mut outer_hash, core::slice::from_ref(&tmp_block_outer));
 
                 repeat8!(k, {
                     // SAFETY: aligned to 64 bytes by type constraint
@@ -417,71 +561,6 @@ impl Pbkdf2HmacSha256State {
                             .write(u32::from_ne_bytes(outer_hash[k].to_be_bytes()));
                     }
                 });
-            }
-
-            #[cfg(all(
-                target_arch = "x86_64",
-                target_feature = "avx2",
-                not(target_feature = "sha")
-            ))]
-            for i in (0..output_item.len()).step_by(8 * 4 * 4) {
-                let mut inner_hash_soa = Align64([[0u32; 4]; 8]);
-
-                repeat4!(j, {
-                    idx += 1;
-                    let inner_hash = inner_digest
-                        .remainder_finalize(GenericArray::from_array(idx.to_be_bytes()));
-
-                    repeat8!(k, {
-                        inner_hash_soa[k][j] = inner_hash[k];
-                    });
-                });
-
-                use crate::sha2_mb::multiway_arx_mb4;
-                use core::arch::x86_64::*;
-                let mut state = core::array::from_fn(|i| unsafe {
-                    _mm_set1_epi32(self.outer_digest_words[i] as _)
-                });
-                let block = unsafe {
-                    [
-                        _mm256_load_si256(inner_hash_soa[0].as_ptr().cast()),
-                        _mm256_load_si256(inner_hash_soa[2].as_ptr().cast()),
-                        _mm256_load_si256(inner_hash_soa[4].as_ptr().cast()),
-                        _mm256_load_si256(inner_hash_soa[6].as_ptr().cast()),
-                        _mm256_zextsi128_si256(_mm_set1_epi32(
-                            u32::from_be_bytes([0x80, 0, 0, 0]) as _
-                        )),
-                        _mm256_setzero_si256(),
-                        _mm256_setzero_si256(),
-                        _mm256_setr_m128i(
-                            _mm_setzero_si128(),
-                            _mm_set1_epi32(u32::from_be_bytes([0, 0, 3, 0]) as _),
-                        ),
-                    ]
-                };
-
-                multiway_arx_mb4(&mut state, block);
-
-                repeat8!(i, {
-                    state[i] = unsafe {
-                        _mm_add_epi32(_mm_set1_epi32(self.outer_digest_words[i] as _), state[i])
-                    };
-                });
-
-                unsafe {
-                    repeat8!(k, {
-                        let mut tmp = Align64([0u32; 4]);
-                        _mm_storeu_si128(tmp.as_mut_ptr().cast(), state[k]);
-                        repeat4!(j, {
-                            output_item
-                                .as_mut_ptr()
-                                .add(i)
-                                .cast::<u32>()
-                                .add(j * 8 + k)
-                                .write(u32::from_ne_bytes(tmp[j].to_be_bytes()));
-                        });
-                    });
-                }
             }
         }
     }
@@ -556,30 +635,95 @@ mod tests {
     use super::*;
 
     #[test]
-    fn pbkdf2_hmac_sha256_reference() {
-        let mut output_scatter = Align64::<Block<U2>>::default();
-        let mut output_gather = Align64::<Block<U2>>::default();
-        let mut expected = Align64::<Block<U2>>::default();
+    fn test_soft_sha256() {
+        const KEY0: u32 = 0x12345678;
+        const KEY1: u32 = 0xdeadbeef;
+        let mut state = SoftSha256 {
+            words: IV,
+            buf: Default::default(),
+            ptr: 0,
+            prev_blocks: 0,
+        };
+        let mut reference = sha2::Sha256::new();
 
-        let hmac_state = Pbkdf2HmacSha256State::new(b"LetMeIn1234");
-        hmac_state.emit_scatter(b"SodiumChloride", [&mut output_scatter]);
-        pbkdf2::pbkdf2_hmac::<sha2::Sha256>(b"LetMeIn1234", b"SodiumChloride", 1, &mut expected);
-        assert_eq!(output_scatter, expected);
-        expected.fill(0);
-        pbkdf2::pbkdf2_hmac::<sha2::Sha256>(b"LetMeIn1234\0", b"SodiumChloride", 1, &mut expected);
-        assert_eq!(output_scatter, expected);
+        let mut tmp = [0; 73];
+        for step in [1, 2, 3, 5, 7, 23, 59, 73] {
+            for _rep in 0..20 {
+                reference.update(&tmp[..step]);
+                state.update(&tmp[..step]);
+                let mut reference_clone = reference.clone();
+                reference_clone.update(&KEY0.to_be_bytes());
+                let reference_hash = reference_clone.finalize();
+                let state_hash = state.remainder_finalize(KEY0);
 
-        hmac_state.emit_gather([&output_scatter], &mut output_gather);
-        pbkdf2::pbkdf2_hmac::<sha2::Sha256>(b"LetMeIn1234", &output_scatter, 1, &mut expected);
-        assert_eq!(output_gather, expected);
-        expected.fill(0);
-        pbkdf2::pbkdf2_hmac::<sha2::Sha256>(b"LetMeIn1234\0", &output_scatter, 1, &mut expected);
-        assert_eq!(output_gather, expected);
-        for offset in 0..(output_scatter.len() - 8) {
-            let mut output = [0u8; 8];
-            hmac_state.partial_gather([&output_scatter], offset, &mut output);
-            assert_eq!(output, expected[offset..offset + 8], "offset: {}", offset);
+                #[cfg(target_arch = "x86_64")]
+                {
+                    let state_hash_inc = state.remainder_finalize(KEY1);
+                    let fast_track_hash =
+                        unsafe { state.remainder_finalize_dual_sna_ni(KEY0, KEY1) };
+                    assert_eq!(state_hash, *fast_track_hash[0]);
+                    assert_eq!(state_hash_inc, *fast_track_hash[1]);
+                }
+
+                let mut reference_hash_words = [0; 8];
+                for j in 0..8 {
+                    reference_hash_words[j] =
+                        u32::from_be_bytes(reference_hash[j * 4..][..4].try_into().unwrap());
+                }
+                assert_eq!(state_hash, reference_hash_words);
+                tmp.iter_mut().enumerate().for_each(|(j, b)| {
+                    *b ^= b.rotate_right(11).wrapping_add(reference_hash[j % 32])
+                });
+            }
         }
+    }
+
+    fn pbkdf2_hmac_sha256_reference<R: ArrayLength + NonZero>() {
+        let mut output_scatter = Align64::<Block<R>>::default();
+        let mut output_gather = Align64::<Block<R>>::default();
+        let mut expected = Align64::<Block<R>>::default();
+        // make sure salt of any length is handled correctly
+        const SALT: [u8; 176] = *
+            b"SodiumChlorideabcdefghijklmnopqrstuvwxyz01234567890abcdefghijklmnopqrstuvwxyz01234567890\
+SodiumChlorideabcdefghijklmnopqrstuvwxyz01234567890abcdefghijklmnopqrstuvwxyz01234567890";
+
+        for salt_len in 0..SALT.len() {
+            let salt = &SALT[..salt_len];
+            let hmac_state = Pbkdf2HmacSha256State::new(b"LetMeIn1234");
+            hmac_state.emit_scatter(salt, [&mut output_scatter]);
+            pbkdf2::pbkdf2_hmac::<sha2::Sha256>(b"LetMeIn1234", salt, 1, &mut expected);
+            assert_eq!(output_scatter, expected);
+            expected.fill(0);
+            pbkdf2::pbkdf2_hmac::<sha2::Sha256>(b"LetMeIn1234\0", salt, 1, &mut expected);
+            assert_eq!(output_scatter, expected);
+
+            hmac_state.emit_gather([&output_scatter], &mut output_gather);
+            pbkdf2::pbkdf2_hmac::<sha2::Sha256>(b"LetMeIn1234", &output_scatter, 1, &mut expected);
+            assert_eq!(output_gather, expected);
+            expected.fill(0);
+            pbkdf2::pbkdf2_hmac::<sha2::Sha256>(
+                b"LetMeIn1234\0",
+                &output_scatter,
+                1,
+                &mut expected,
+            );
+            assert_eq!(output_gather, expected);
+            for offset in 0..(output_scatter.len() - 8) {
+                let mut output = [0u8; 8];
+                hmac_state.partial_gather([&output_scatter], offset, &mut output);
+                assert_eq!(output, expected[offset..offset + 8], "offset: {}", offset);
+            }
+        }
+    }
+
+    #[test]
+    fn test_pbkdf2_hmac_sha256_reference_r1() {
+        pbkdf2_hmac_sha256_reference::<U1>();
+    }
+
+    #[test]
+    fn test_pbkdf2_hmac_sha256_reference_r2() {
+        pbkdf2_hmac_sha256_reference::<U2>();
     }
 
     #[test]

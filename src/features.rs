@@ -27,6 +27,7 @@ pub trait Feature {
 pub fn iterate<F: FnMut(&dyn Feature)>(mut f: F) {
     #[cfg(target_arch = "x86_64")]
     {
+        f(&Sha);
         f(&Avx2);
         f(&Avx512F);
         f(&Avx512VL);
@@ -64,6 +65,7 @@ macro_rules! define_x86_feature {
     };
 }
 
+define_x86_feature!(Sha, cpuid_sha, "sha");
 define_x86_feature!(Avx2, cpuid_avx2, "avx2");
 define_x86_feature!(Avx512F, cpuid_avx512f, "avx512f");
 define_x86_feature!(Avx512VL, cpuid_avx512vl, "avx512vl");
@@ -73,39 +75,22 @@ mod tests {
     #[cfg_attr(not(target_arch = "x86_64"), expect(unused_imports))]
     use super::*;
 
-    #[test]
-    #[cfg(target_arch = "x86_64")]
-    fn test_avx2() {
-        if !cfg!(target_feature = "avx2") {
-            assert_eq!(Avx2.check(), std::arch::is_x86_feature_detected!("avx2"));
-        } else {
-            assert!(Avx2.check());
-        }
+    macro_rules! write_test {
+        ($test_name:ident, $name:tt, $checker:expr) => {
+            #[test]
+            fn $test_name() {
+                if !cfg!(target_feature = $name) {
+                    assert_eq!($checker.check(), std::arch::is_x86_feature_detected!($name));
+                } else {
+                    assert!($checker.check_volatile());
+                    assert!($checker.check());
+                }
+            }
+        };
     }
 
-    #[test]
-    #[cfg(target_arch = "x86_64")]
-    fn test_avx512f() {
-        if !cfg!(target_feature = "avx512f") {
-            assert_eq!(
-                Avx512F.check(),
-                std::arch::is_x86_feature_detected!("avx512f")
-            );
-        } else {
-            assert!(Avx512F.check());
-        }
-    }
-
-    #[test]
-    #[cfg(target_arch = "x86_64")]
-    fn test_avx512vl() {
-        if !cfg!(target_feature = "avx512vl") {
-            assert_eq!(
-                Avx512VL.check(),
-                std::arch::is_x86_feature_detected!("avx512vl")
-            );
-        } else {
-            assert!(Avx512VL.check());
-        }
-    }
+    write_test!(test_sha, "sha", Sha);
+    write_test!(test_avx2, "avx2", Avx2);
+    write_test!(test_avx512f, "avx512f", Avx512F);
+    write_test!(test_avx512vl, "avx512vl", Avx512VL);
 }
