@@ -11,14 +11,6 @@ use crate::{
     simd::{Compose, ConcatLo, ExtractU32x2, FlipTable16, Inverse, Swizzle},
 };
 
-#[rustfmt::skip]
-macro_rules! repeat2 {
-    ($i:ident, $c:block) => {
-        { let $i = 0; $c; }
-        { let $i = 1; $c; }
-    };
-}
-
 #[cfg(target_feature = "avx512vl")]
 macro_rules! mm_rol_epi32x {
     ($w:expr, $amt:literal) => {

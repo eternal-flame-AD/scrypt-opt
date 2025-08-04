@@ -55,6 +55,61 @@ impl<T> Align64<T> {
     }
 }
 
+#[repr(align(32))]
+#[derive(Default, Debug, PartialEq, Eq, Clone, Copy)]
+/// Align to 32 bytes
+pub struct Align32<T>(pub T);
+
+impl<T> Align32<T> {
+    /// Perform a reference cast to an [`Align32<Block<R>>`] without checking the alignment.
+    ///
+    /// # Safety
+    /// This function is unsafe because it does not check the alignment of the input pointer.
+    #[inline(always)]
+    pub const unsafe fn new_unchecked(input: &T) -> &Self {
+        unsafe { &*(input as *const T as *const Self) }
+    }
+
+    /// Perform a reference cast to an [`Align32<Block<R>>`].
+    ///
+    /// # Panics
+    ///
+    /// Panics if the input pointer is not aligned to 32 bytes.
+    pub fn new(input: &T) -> &Self {
+        let ptr = input as *const T;
+        assert_eq!(
+            ptr.align_offset(64),
+            0,
+            "Input pointer is not aligned to 32 bytes"
+        );
+        unsafe { Self::new_unchecked(input) }
+    }
+
+    /// Perform a mutable reference cast to an [`Align32<Block<R>>`] without checking the alignment.
+    ///
+    /// # Safety
+    /// This function is unsafe because it does not check the alignment of the input pointer.
+    #[inline(always)]
+    pub const unsafe fn new_mut_unchecked(input: &mut T) -> &mut Self {
+        unsafe { &mut *(input as *mut T as *mut Self) }
+    }
+
+    /// Perform a mutable reference cast to an [`Align32<Block<R>>`].
+    ///
+    /// # Panics
+    ///
+    /// Panics if the input pointer is not aligned to 32 bytes.
+    pub fn new_mut(input: &mut T) -> &mut Self {
+        let ptr = input as *mut T;
+        assert_eq!(
+            ptr.align_offset(64),
+            0,
+            "Input pointer is not aligned to 32 bytes"
+        );
+        unsafe { Self::new_mut_unchecked(input) }
+    }
+}
+
 impl<T> AsRef<T> for Align64<T> {
     fn as_ref(&self) -> &T {
         &self.0
@@ -87,6 +142,43 @@ impl<T> Deref for Align64<T> {
 }
 
 impl<T> DerefMut for Align64<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl<T> AsRef<T> for Align32<T> {
+    fn as_ref(&self) -> &T {
+        &self.0
+    }
+}
+
+impl<T> AsRef<Align32<T>> for Align32<T> {
+    fn as_ref(&self) -> &Align32<T> {
+        self
+    }
+}
+
+impl<T> AsMut<Align32<T>> for Align32<T> {
+    fn as_mut(&mut self) -> &mut Align32<T> {
+        self
+    }
+}
+
+impl<T> AsMut<T> for Align32<T> {
+    fn as_mut(&mut self) -> &mut T {
+        &mut self.0
+    }
+}
+
+impl<T> Deref for Align32<T> {
+    type Target = T;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<T> DerefMut for Align32<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
     }

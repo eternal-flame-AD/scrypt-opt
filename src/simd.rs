@@ -3,11 +3,24 @@
     reason = "some are only used in certain core configurations"
 )]
 
-#[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
+#[cfg(target_arch = "x86_64")]
 use core::arch::x86_64::*;
 
 pub trait Swizzle<const N: usize> {
     const INDEX: [usize; N];
+
+    #[cfg(target_arch = "x86_64")]
+    const INDEX_YMM: __m256i = unsafe {
+        const {
+            let mut index = [0; 8];
+            let mut i = 0;
+            while i < 8 {
+                index[i] = Self::INDEX[i] as u32;
+                i += 1;
+            }
+            core::mem::transmute::<[u32; 8], __m256i>(index)
+        }
+    };
 
     #[cfg(all(target_arch = "x86_64", target_feature = "avx512f"))]
     const INDEX_ZMM: __m512i = unsafe {
