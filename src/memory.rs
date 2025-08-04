@@ -78,7 +78,7 @@ impl<T> Align32<T> {
     pub fn new(input: &T) -> &Self {
         let ptr = input as *const T;
         assert_eq!(
-            ptr.align_offset(64),
+            ptr.align_offset(32),
             0,
             "Input pointer is not aligned to 32 bytes"
         );
@@ -102,7 +102,7 @@ impl<T> Align32<T> {
     pub fn new_mut(input: &mut T) -> &mut Self {
         let ptr = input as *mut T;
         assert_eq!(
-            ptr.align_offset(64),
+            ptr.align_offset(32),
             0,
             "Input pointer is not aligned to 32 bytes"
         );
