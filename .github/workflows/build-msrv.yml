@@ -1,0 +1,55 @@
+name: Build on MSRV
+
+permissions:
+  contents: read
+
+on:
+  push:
+
+env:
+  CARGO_TERM_COLOR: always
+  FEATURE_SET_LIB: std
+  FEATURE_SET_BIN: bin core_affinity huge-page
+  TARGET_MCPUS: haswell skylake
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install MSRV toolchain and musl target
+        uses: dtolnay/rust-toolchain@1.86
+        with:
+          components: rust-src
+          targets: x86_64-unknown-linux-musl
+
+      - name: Test and Build artifacts for musl target
+        run: |
+            mkdir -p tmp/artifacts
+            TARGET=x86_64-unknown-linux-musl
+            for mcpu in $TARGET_MCPUS; do
+                RUSTFLAGS="-Ctarget-cpu=$mcpu" cargo test
+                RUSTFLAGS="-Ctarget-cpu=$mcpu" cargo build --profile release --lib --features "$FEATURE_SET_LIB" --target-dir target/$mcpu --target $TARGET 
+                cp target/$mcpu/$TARGET/release/libscrypt_opt.a tmp/artifacts/libscrypt_opt-$mcpu.a
+                RUSTFLAGS="-Ctarget-cpu=$mcpu" cargo build --profile release --bin scrypt-opt --features "$FEATURE_SET_BIN" --target-dir target/$mcpu --target $TARGET
+                cp target/$mcpu/$TARGET/release/scrypt-opt tmp/artifacts/scrypt-opt-$mcpu
+            done
+            
+      - name: Install MSRV toolchain and GNU target
+        uses: dtolnay/rust-toolchain@1.86
+        with:
+          components: rust-src
+          targets: x86_64-unknown-linux-gnu
+
+      - name: Test and Build artifacts for MSRV target
+        run: |
+            mkdir -p tmp/artifacts
+            TARGET=x86_64-unknown-linux-gnu
+            for mcpu in $TARGET_MCPUS; do
+                RUSTFLAGS="-Ctarget-cpu=$mcpu" cargo test
+                RUSTFLAGS="-Ctarget-cpu=$mcpu" cargo build --lib --profile release --features "$FEATURE_SET_LIB" --target-dir target/$mcpu --target $TARGET
+                cp target/$mcpu/$TARGET/release/libscrypt_opt.so tmp/artifacts/libscrypt_opt-$mcpu.so
+            done

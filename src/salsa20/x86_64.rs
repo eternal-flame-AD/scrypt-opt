@@ -96,7 +96,7 @@ impl Salsa20 for BlockAvx512F {
             _mm512_store_si512(
                 ptr.as_mut_ptr().cast::<__m512i>(),
                 _mm512_permutexvar_epi32(
-                    <Inverse<_, Pivot> as Swizzle<16>>::INDEX_ZMM,
+                    <Inverse<16, Pivot> as Swizzle<16>>::INDEX_ZMM,
                     _mm512_load_si512(ptr.as_ptr().cast::<__m512i>()),
                 ),
             )
@@ -198,7 +198,7 @@ impl<Lanes: ArrayLength + IsLessOrEqual<U2>> Salsa20 for BlockSse2<Lanes> {
         unsafe {
             let tmp = ptr.clone();
             for i in 0..16 {
-                ptr[i] = tmp[<Inverse<_, Pivot> as Swizzle<16>>::INDEX[i]];
+                ptr[i] = tmp[<Inverse<16, Pivot> as Swizzle<16>>::INDEX[i]];
             }
         }
     }
