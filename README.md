@@ -8,7 +8,7 @@ A pure-rust, permissively licensed, optimized scrypt implementation for moderate
 
 ## System Requirements
 
-- Rust 1.85+ for general/AVX2 support, Rust 1.89+ for AVX512F support, nightly for portable-simd support
+- Rust 1.86+ for general/AVX2 support, Rust 1.89+ for AVX512F support, nightly for portable-simd support
 - AVX2 is good, AVX512F is great (hand tuned, about 10% extra throughput), but at least a system with **256-bit SIMD** support with the "portable-simd" feature
 
 ## Building Instructions
