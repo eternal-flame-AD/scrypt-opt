@@ -608,7 +608,7 @@ impl<T> core::convert::AsMut<[T]> for MaybeHugeSlice<T> {
     }
 }
 
-impl<T> MaybeHugeSlice<T> {
+impl<T: Default> MaybeHugeSlice<T> {
     /// Check if the buffer is backed by a huge page
     pub fn is_huge_page(&self) -> bool {
         match self {
@@ -618,39 +618,25 @@ impl<T> MaybeHugeSlice<T> {
         }
     }
 
-    /// Create a new huge page-backed buffer
+    /// Create a new huge page-backed buffer with the default value
     #[cfg(feature = "huge-page")]
-    pub fn new_huge_slice_zeroed(len: usize) -> Result<Self, std::io::Error> {
+    pub fn new_huge_slice(len: usize) -> Result<Self, std::io::Error> {
         let b: HugeSlice<core::mem::MaybeUninit<T>> = HugeSlice::new(len)?;
         unsafe {
-            core::ptr::write_bytes(b.ptr.cast::<T>(), 0, len);
+            for i in 0..len {
+                let tmp = core::mem::MaybeUninit::<T>::new(Default::default());
+                core::ptr::write(b.ptr.add(i), tmp);
+            }
             Ok(MaybeHugeSlice::Huge(b.assume_init()))
         }
     }
 
-    /// Create a new normal buffer
+    /// Create a new normal buffer with the default value
     #[cfg(feature = "alloc")]
-    pub fn new_slice_zeroed(len: usize) -> Self {
+    pub fn new_slice(len: usize) -> Self {
         let mut b = alloc::vec::Vec::<T>::with_capacity(len);
-        unsafe {
-            b.set_len(len);
-            MaybeHugeSlice::Normal(b.into())
-        }
-    }
-
-    /// Create a new buffer
-    #[cfg(feature = "alloc")]
-    pub fn new_maybe(len: usize) -> Self {
-        #[cfg(feature = "huge-page")]
-        {
-            match Self::new_huge_slice_zeroed(len) {
-                Ok(huge) => huge,
-                Err(_) => Self::new_slice_zeroed(len),
-            }
-        }
-
-        #[cfg(not(feature = "huge-page"))]
-        Self::new_slice_zeroed(len)
+        b.resize_with(len, || Default::default());
+        MaybeHugeSlice::Normal(b.into())
     }
 
     /// Create a new huge page-backed buffer backed by a file
@@ -661,17 +647,32 @@ impl<T> MaybeHugeSlice<T> {
     }
 
     /// Create a new buffer
-    #[cfg(feature = "std")]
-    pub fn new(len: usize) -> (Self, Option<std::io::Error>) {
+    #[cfg(feature = "alloc")]
+    pub fn new_maybe(len: usize) -> Self {
         #[cfg(feature = "huge-page")]
         {
-            match Self::new_huge_slice_zeroed(len) {
-                Ok(huge) => (huge, None),
-                Err(e) => (Self::new_slice_zeroed(len), Some(e.into())),
+            match Self::new_huge_slice(len) {
+                Ok(huge) => huge,
+                Err(_) => Self::new_slice(len),
             }
         }
 
         #[cfg(not(feature = "huge-page"))]
-        (Self::new_slice_zeroed(len), None)
+        Self::new_slice(len)
+    }
+
+    /// Create a new buffer
+    #[cfg(feature = "std")]
+    pub fn new(len: usize) -> (Self, Option<std::io::Error>) {
+        #[cfg(feature = "huge-page")]
+        {
+            match Self::new_huge_slice(len) {
+                Ok(huge) => (huge, None),
+                Err(e) => (Self::new_slice(len), Some(e.into())),
+            }
+        }
+
+        #[cfg(not(feature = "huge-page"))]
+        (Self::new_slice(len), None)
     }
 }
