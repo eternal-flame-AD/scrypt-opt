@@ -210,13 +210,13 @@ struct MultiThreadedHugeSlice<T> {
     _marker: PhantomData<T>,
 }
 
-impl<T> MultiThreadedHugeSlice<T> {
+impl<T: Default> MultiThreadedHugeSlice<T> {
     fn new(len_per_thread: usize, num_threads: NonZeroU32) -> Self {
         if len_per_thread == 0 {
             return Self {
                 len_per_thread,
                 num_threads,
-                inner: scrypt_opt::memory::MaybeHugeSlice::new_slice_zeroed(0),
+                inner: scrypt_opt::memory::MaybeHugeSlice::new_slice(0),
                 _marker: PhantomData,
             };
         }
