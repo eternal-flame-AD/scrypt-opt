@@ -635,7 +635,7 @@ impl<T: Default> MaybeHugeSlice<T> {
     #[cfg(feature = "alloc")]
     pub fn new_slice(len: usize) -> Self {
         let mut b = alloc::vec::Vec::<T>::with_capacity(len);
-        b.resize_with(len, || Default::default());
+        b.resize_with(len, Default::default);
         MaybeHugeSlice::Normal(b.into())
     }
 
